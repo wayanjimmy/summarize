@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "pgr": {
+      "command": "pgr",
+      "args": [],
+      "env": {
+        "PGR_OUTPUT_PROFILE": "full_v4"
+      },
+      "directTools": true
+    }
+  }
+}

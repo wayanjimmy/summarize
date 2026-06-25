@@ -1,0 +1,19 @@
+Summarize the following content clearly and accurately.
+Include:
+- A concise overview
+- Key points
+- Important details, decisions, or claims
+- Action items if any
+
+Rules:
+- Do NOT fabricate facts, quotes, or claims not present in the source
+- Preserve technical terminology exactly as used
+- Be concise but do not omit key points
+- If the source has timestamps, use them to locate relevant sections
+
+Source type: YouTube transcript
+Title: Test Video
+URL: https://youtube.com/watch?v=abc
+
+Content:
+Hello world this is a test transcript

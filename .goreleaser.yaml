@@ -1,0 +1,40 @@
+version: 2
+
+builds:
+  - id: summarize
+    main: ./cmd/server
+    binary: summarize
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+    ldflags:
+      - -s -w -X main.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.Date}}
+
+snapshot:
+  version_template: "{{ .Version }}-next"
+
+archives:
+  - id: default
+    name_template: >-
+      {{ .ProjectName }}_
+      {{ .Version }}_
+      {{ .Os }}_
+      {{ .Arch }}
+    format: tar.gz
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+release:
+  github:
+    owner: jimbo
+    name: summarize

@@ -1,0 +1,32 @@
+# Binaries
+/summarize
+/bin/
+*.exe
+
+# Build output
+/dist/
+
+# Data directories
+/data/
+
+# Environment
+.env
+.env.secrets
+
+# Scripts (deployment scripts belong in infra)
+/scripts/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+*.test
+*.out
+coverage.html
