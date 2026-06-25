@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/jimbo/summarize/internal/domain"
+	"github.com/wayanjimmy/summarize/internal/domain"
 )
 
 // ErrorResponse is the standard error JSON shape.

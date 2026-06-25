@@ -10,7 +10,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/jimbo/summarize/internal/domain"
+	"github.com/wayanjimmy/summarize/internal/domain"
 )
 
 //go:embed schema.sql

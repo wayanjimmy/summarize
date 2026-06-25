@@ -11,12 +11,12 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jimbo/summarize/internal/config"
-	"github.com/jimbo/summarize/internal/domain"
-	"github.com/jimbo/summarize/internal/engine"
-	"github.com/jimbo/summarize/internal/events"
-	"github.com/jimbo/summarize/internal/store"
-	"github.com/jimbo/summarize/internal/youtube"
+	"github.com/wayanjimmy/summarize/internal/config"
+	"github.com/wayanjimmy/summarize/internal/domain"
+	"github.com/wayanjimmy/summarize/internal/engine"
+	"github.com/wayanjimmy/summarize/internal/events"
+	"github.com/wayanjimmy/summarize/internal/store"
+	"github.com/wayanjimmy/summarize/internal/youtube"
 )
 
 // createSummaryRequest is the JSON body for POST /v1/summaries.

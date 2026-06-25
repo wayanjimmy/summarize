@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jimbo/summarize/internal/config"
-	"github.com/jimbo/summarize/internal/domain"
-	"github.com/jimbo/summarize/internal/engine"
-	"github.com/jimbo/summarize/internal/store"
+	"github.com/wayanjimmy/summarize/internal/config"
+	"github.com/wayanjimmy/summarize/internal/domain"
+	"github.com/wayanjimmy/summarize/internal/engine"
+	"github.com/wayanjimmy/summarize/internal/store"
 )
 
 func TestListModelsPartialFailure(t *testing.T) {

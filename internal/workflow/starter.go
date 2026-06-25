@@ -6,8 +6,8 @@ import (
 	"log/slog"
 
 	"github.com/cschleiden/go-workflows/client"
-	"github.com/jimbo/summarize/internal/domain"
-	"github.com/jimbo/summarize/internal/events"
+	"github.com/wayanjimmy/summarize/internal/domain"
+	"github.com/wayanjimmy/summarize/internal/events"
 )
 
 // Starter listens for NATS events and starts go-workflows instances.

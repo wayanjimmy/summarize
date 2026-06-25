@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jimbo/summarize/internal/domain"
+	"github.com/wayanjimmy/summarize/internal/domain"
 	_ "modernc.org/sqlite"
 )
 

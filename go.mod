@@ -1,4 +1,4 @@
-module github.com/jimbo/summarize
+module github.com/wayanjimmy/summarize
 
 go 1.26.4
 

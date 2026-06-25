@@ -7,10 +7,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jimbo/summarize/internal/domain"
-	"github.com/jimbo/summarize/internal/engine"
-	"github.com/jimbo/summarize/internal/prompt"
-	"github.com/jimbo/summarize/internal/youtube"
+	"github.com/wayanjimmy/summarize/internal/domain"
+	"github.com/wayanjimmy/summarize/internal/engine"
+	"github.com/wayanjimmy/summarize/internal/prompt"
+	"github.com/wayanjimmy/summarize/internal/youtube"
 )
 
 // RunMeta is a lightweight metadata returned by LoadRunActivity.
