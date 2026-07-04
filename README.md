@@ -2,6 +2,8 @@
 
 A simple Go REST API for summarizing YouTube videos and text using `pi` and `agy` CLI backends.
 
+![Agent Chat Integration Example](docs/agent-chat-example.png)
+
 ## Features
 
 - Async summarization via REST API
@@ -216,6 +218,8 @@ open http://localhost:8080/diag/
 ```
 
 `/diag` redirects to `/diag/` so the dashboard can load its embedded assets. The dashboard is unauthenticated; expose it only on trusted/local deployments or protect it at your proxy.
+
+![go-workflows Diagnostics Dashboard](docs/workflow-dashboard.png)
 
 ## Architecture
 
