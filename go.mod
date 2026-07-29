@@ -32,6 +32,7 @@ require (
 	github.com/nats-io/nkeys v0.4.16 // indirect
 	github.com/nats-io/nuid v1.0.1 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
+	github.com/open-software-network/os-epode/sdk/go v0.0.0-20260729141809-6ac6fcecedd3 // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/stretchr/objx v0.5.2 // indirect

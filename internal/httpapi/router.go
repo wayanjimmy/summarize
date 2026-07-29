@@ -1,15 +1,18 @@
 package httpapi
 
 import (
+	"log"
 	"net/http"
+	"os"
 
 	"github.com/cschleiden/go-workflows/diag"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	agentfeedback "github.com/open-software-network/os-epode/sdk/go"
 )
 
-// NewRouter creates the chi router with all routes.
-func NewRouter(h *Handlers, diagBackend diag.Backend) chi.Router {
+// NewRouter creates the router with all routes and Agent Feedback middleware.
+func NewRouter(h *Handlers, diagBackend diag.Backend) http.Handler {
 	r := chi.NewRouter()
 
 	// Middleware
@@ -35,5 +38,18 @@ func NewRouter(h *Handlers, diagBackend diag.Backend) chi.Router {
 		r.Get("/runs/{run_id}/status", h.GetRunStatus)
 	})
 
+	apiKey := os.Getenv("AGENT_FEEDBACK_KEY")
+	if apiKey != "" {
+		feedback, err := agentfeedback.New(agentfeedback.Options{
+			APIKey:  apiKey,
+			Include: []string{"/v1/summaries"},
+		})
+		if err != nil {
+			log.Fatal(err)
+		}
+		return feedback.Middleware(r)
+	}
+
 	return r
 }
+
