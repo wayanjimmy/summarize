@@ -79,7 +79,7 @@ func NewRouter(h *Handlers, mcpHandler http.Handler, diagBackend diag.Backend, r
 	if apiKey != "" {
 		opts := agentfeedback.Options{
 			APIKey:     apiKey,
-			Include:    []string{"/v1/summaries", "/v1/summaries/**", "/v1/runs/**/status"},
+			Include:    []string{"/v1/summaries", "/v1/summaries/**", "/v1/runs/**"},
 			SessionRef: agentFeedbackSessionRef,
 		}
 		if endpoint := os.Getenv("AGENT_FEEDBACK_ENDPOINT"); endpoint != "" {

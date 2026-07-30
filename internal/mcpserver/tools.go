@@ -12,13 +12,13 @@ import (
 )
 
 // registerTools registers the summarize and get_summary tools on the server.
-func registerTools(server *mcp.Server, svc *summary.Service) {
+func registerTools(server *mcp.Server, svc *summary.Service, fi *FeedbackIntegration) {
 	mcp.AddTool(server,
 		&mcp.Tool{
 			Name:        "summarize",
 			Description: "Submit a YouTube URL or raw text for summarization. Returns a run ID that can be polled with the get_summary tool.",
 		},
-		summarizeHandler(svc),
+		summarizeHandler(svc, fi),
 	)
 
 	mcp.AddTool(server,
@@ -26,7 +26,7 @@ func registerTools(server *mcp.Server, svc *summary.Service) {
 			Name:        "get_summary",
 			Description: "Get the status and result of a summarization run. Returns the summary text when succeeded, status when in progress, or error details when failed.",
 		},
-		getSummaryHandler(svc),
+		getSummaryHandler(svc, fi),
 	)
 
 	mcp.AddTool(server,
@@ -34,7 +34,7 @@ func registerTools(server *mcp.Server, svc *summary.Service) {
 			Name:        "cancel_summary",
 			Description: "Cancel a queued or running summarization run. The run is marked as cancelled immediately. Cannot cancel runs that are already succeeded, failed, or cancelled.",
 		},
-		cancelSummaryHandler(svc),
+		cancelSummaryHandler(svc, fi),
 	)
 
 	mcp.AddTool(server,
@@ -42,11 +42,11 @@ func registerTools(server *mcp.Server, svc *summary.Service) {
 			Name:        "update_summary",
 			Description: "Update the prompt of a queued summarization run before the workflow picks it up. Only runs in the queued status can be updated.",
 		},
-		updateSummaryHandler(svc),
+		updateSummaryHandler(svc, fi),
 	)
 }
 
-func summarizeHandler(svc *summary.Service) mcp.ToolHandlerFor[SummarizeInput, SummarizeOutput] {
+func summarizeHandler(svc *summary.Service, fi *FeedbackIntegration) mcp.ToolHandlerFor[SummarizeInput, SummarizeOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input SummarizeInput) (*mcp.CallToolResult, SummarizeOutput, error) {
 		principal, ok := mcpauth.PrincipalFromContext(ctx)
 		if !ok {
@@ -80,15 +80,17 @@ func summarizeHandler(svc *summary.Service) mcp.ToolHandlerFor[SummarizeInput, S
 			text = fmt.Sprintf("Summary request accepted. Run ID: %s. Status: %s. Use get_summary with run_id %q to check status and retrieve the result.", result.RunID, result.Status, result.RunID)
 		}
 
-		return &mcp.CallToolResult{
+		toolResult := &mcp.CallToolResult{
 			Content: []mcp.Content{
 				&mcp.TextContent{Text: text},
 			},
-		}, out, nil
+		}
+		addFeedback(toolResult, fi, "summarize")
+		return toolResult, out, nil
 	}
 }
 
-func getSummaryHandler(svc *summary.Service) mcp.ToolHandlerFor[GetSummaryInput, GetSummaryOutput] {
+func getSummaryHandler(svc *summary.Service, fi *FeedbackIntegration) mcp.ToolHandlerFor[GetSummaryInput, GetSummaryOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input GetSummaryInput) (*mcp.CallToolResult, GetSummaryOutput, error) {
 		principal, ok := mcpauth.PrincipalFromContext(ctx)
 		if !ok {
@@ -144,16 +146,18 @@ func getSummaryHandler(svc *summary.Service) mcp.ToolHandlerFor[GetSummaryInput,
 			text = fmt.Sprintf("Run %s has unknown status %q.", run.ID, run.Status)
 		}
 
-		return &mcp.CallToolResult{
+		toolResult := &mcp.CallToolResult{
 			IsError: isError,
 			Content: []mcp.Content{
 				&mcp.TextContent{Text: text},
 			},
-		}, out, nil
+		}
+		addFeedback(toolResult, fi, "get_summary")
+		return toolResult, out, nil
 	}
 }
 
-func cancelSummaryHandler(svc *summary.Service) mcp.ToolHandlerFor[CancelSummaryInput, TaskOutput] {
+func cancelSummaryHandler(svc *summary.Service, fi *FeedbackIntegration) mcp.ToolHandlerFor[CancelSummaryInput, TaskOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input CancelSummaryInput) (*mcp.CallToolResult, TaskOutput, error) {
 		principal, ok := mcpauth.PrincipalFromContext(ctx)
 		if !ok {
@@ -173,15 +177,17 @@ func cancelSummaryHandler(svc *summary.Service) mcp.ToolHandlerFor[CancelSummary
 
 		text := fmt.Sprintf("Run %s cancelled. Status: %s.", task.ID, task.Status)
 
-		return &mcp.CallToolResult{
+		toolResult := &mcp.CallToolResult{
 			Content: []mcp.Content{
 				&mcp.TextContent{Text: text},
 			},
-		}, out, nil
+		}
+		addFeedback(toolResult, fi, "cancel_summary")
+		return toolResult, out, nil
 	}
 }
 
-func updateSummaryHandler(svc *summary.Service) mcp.ToolHandlerFor[UpdateSummaryInput, TaskOutput] {
+func updateSummaryHandler(svc *summary.Service, fi *FeedbackIntegration) mcp.ToolHandlerFor[UpdateSummaryInput, TaskOutput] {
 	return func(ctx context.Context, _ *mcp.CallToolRequest, input UpdateSummaryInput) (*mcp.CallToolResult, TaskOutput, error) {
 		principal, ok := mcpauth.PrincipalFromContext(ctx)
 		if !ok {
@@ -205,10 +211,21 @@ func updateSummaryHandler(svc *summary.Service) mcp.ToolHandlerFor[UpdateSummary
 
 		text := fmt.Sprintf("Run %s updated. Status: %s. Use get_summary to check progress.", task.ID, task.Status)
 
-		return &mcp.CallToolResult{
+		toolResult := &mcp.CallToolResult{
 			Content: []mcp.Content{
 				&mcp.TextContent{Text: text},
 			},
-		}, out, nil
+		}
+		addFeedback(toolResult, fi, "update_summary")
+		return toolResult, out, nil
 	}
+}
+
+func addFeedback(result *mcp.CallToolResult, fi *FeedbackIntegration, toolName string) {
+	if fi == nil {
+		return
+	}
+	interactionID, envelope := fi.PrepareInteraction()
+	result.Meta = mcp.Meta{"_agentFeedback": envelope}
+	go fi.RecordMCP(interactionID, "tools/call/"+toolName, 0)
 }

@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+	"time"
 
 	"github.com/cschleiden/go-workflows/backend"
 	"github.com/cschleiden/go-workflows/backend/sqlite"
@@ -163,15 +164,31 @@ func main() {
 
 	// Create MCP handler (stateless 2026-07-28)
 	var mcpHandler http.Handler
+	var feedbackIntegration *mcpserver.FeedbackIntegration
+	if cfg.AgentFeedbackKey != "" {
+		feedbackIntegration, err = mcpserver.NewFeedbackIntegration(mcpserver.FeedbackConfig{
+			APIKey: cfg.AgentFeedbackKey, Endpoint: cfg.AgentFeedbackEndpoint,
+		})
+		if err != nil {
+			log.Fatalf("Failed to initialize MCP Agent Feedback: %v", err)
+		}
+		defer func() {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer shutdownCancel()
+			if err := feedbackIntegration.Close(shutdownCtx); err != nil {
+				slog.Error("MCP Agent Feedback shutdown error", "error", err)
+			}
+		}()
+	}
 	if cfg.MCPEnable {
-		rawMCP := mcpserver.NewHandler(summaryService, version)
+		rawMCP := mcpserver.NewHandler(summaryService, version, feedbackIntegration)
 		// Wrap with auth middleware
 		authCfg := mcpauth.Config{
 			Mode:   cfg.MCPAuthMode,
 			APIKey: cfg.MCPAPIKey,
 			OAuth: mcpauth.OAuthConfig{
-				Issuer:  cfg.MCPOAuthISS,
-				JWKSURL: cfg.MCPOAuthJWKS,
+				Issuer:   cfg.MCPOAuthISS,
+				JWKSURL:  cfg.MCPOAuthJWKS,
 				Audience: cfg.MCPOAuthAud,
 			},
 		}

@@ -75,7 +75,7 @@ func newTestService(t *testing.T) (*summary.Service, *store.Store) {
 // newTestHandler wraps the MCP handler with "none" auth mode so tool
 // handlers receive a default principal in the request context.
 func newTestHandler(svc *summary.Service) http.Handler {
-	raw := NewHandler(svc, "test")
+	raw := NewHandler(svc, "test", nil)
 	return mcpauth.Middleware(mcpauth.Config{Mode: mcpauth.AuthModeNone})(raw)
 }
 
@@ -87,8 +87,8 @@ func connectClient(t *testing.T, handler http.Handler) *mcp.ClientSession {
 	t.Cleanup(httpServer.Close)
 
 	transport := &mcp.StreamableClientTransport{
-		Endpoint:              httpServer.URL,
-		DisableStandaloneSSE:  true,
+		Endpoint:             httpServer.URL,
+		DisableStandaloneSSE: true,
 	}
 
 	client := mcp.NewClient(
