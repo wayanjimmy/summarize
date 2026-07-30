@@ -58,16 +58,8 @@ CREATE TABLE IF NOT EXISTS summary_runs (
   finished_at TEXT
 );
 
--- Partial unique index: prevents duplicate work for the same (owner, key) pair.
--- Only enforced when idempotency_key is non-NULL.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_summary_runs_idempotency
-  ON summary_runs(owner_id, idempotency_key)
-  WHERE idempotency_key IS NOT NULL;
-
--- Index for owner-scoped dedup queries.
-CREATE INDEX IF NOT EXISTS idx_summary_runs_owner
-  ON summary_runs(owner_id);
-
+-- The idempotency and owner indexes are created by migration code in store.go
+-- after ALTER TABLE adds the columns to existing databases.
 
 CREATE INDEX IF NOT EXISTS idx_summary_runs_status
   ON summary_runs(status);

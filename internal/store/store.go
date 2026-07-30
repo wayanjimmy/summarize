@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -117,7 +118,142 @@ func New(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("create owner index: %w", err)
 	}
 
+	// Migrate: update status CHECK constraint to include 'cancelled'.
+	// SQLite cannot ALTER a CHECK constraint, so we recreate the table.
+	// The migration is idempotent: if the CHECK already includes 'cancelled',
+	// the temp table is not created and this is a no-op.
+	if err := migrateCancelledStatus(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate cancelled status: %w", err)
+	}
+
 	return &Store{db: db}, nil
+}
+
+// migrateCancelledStatus recreates the summary_runs table with an updated
+// status CHECK constraint that includes 'cancelled'. SQLite does not support
+// modifying CHECK constraints in-place, so the standard table-rebuild
+// pattern is used. The migration is a no-op if the CHECK already includes
+// 'cancelled'.
+func migrateCancelledStatus(db *sql.DB) error {
+	// Check if the current CHECK constraint already includes 'cancelled'.
+	var schemaSQL string
+	err := db.QueryRow("SELECT sql FROM sqlite_master WHERE type='table' AND name='summary_runs'").Scan(&schemaSQL)
+	if err != nil {
+		return fmt.Errorf("read schema: %w", err)
+	}
+	if strings.Contains(schemaSQL, "'cancelled'") {
+		return nil // already migrated
+	}
+
+	// Recreate the table with the updated CHECK constraint.
+	// This uses the SQLite table-rebuild pattern:
+	// 1. Create new table with desired schema
+	// 2. Copy data from old table
+	// 3. Drop old table
+	// 4. Rename new table
+	// 5. Recreate indexes
+	steps := []string{
+		`CREATE TABLE summary_runs_new (
+			id TEXT PRIMARY KEY,
+			status TEXT NOT NULL CHECK (
+				status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')
+			),
+			stage TEXT NOT NULL DEFAULT 'queued',
+			input_type TEXT NOT NULL CHECK (
+				input_type IN ('youtube', 'text')
+			),
+			source_url TEXT,
+			input_text TEXT,
+			youtube_video_id TEXT,
+			youtube_title TEXT,
+			engine TEXT NOT NULL CHECK (
+				engine IN ('pi', 'agy')
+			),
+			model TEXT,
+			format TEXT NOT NULL DEFAULT 'summary',
+			truncated BOOLEAN NOT NULL DEFAULT 0,
+			transcript_with_timestamps TEXT,
+			transcript_with_timestamps_chars INTEGER NOT NULL DEFAULT 0,
+			prompt TEXT NOT NULL,
+			transcript TEXT,
+			transcript_chars INTEGER NOT NULL DEFAULT 0,
+			summary TEXT,
+			summary_chars INTEGER NOT NULL DEFAULT 0,
+			error_code TEXT,
+			error_message TEXT,
+			stderr TEXT,
+			command TEXT,
+			event_id TEXT,
+			event_published_at TEXT,
+			workflow_instance_id TEXT,
+			workflow_execution_id TEXT,
+			owner_id TEXT NOT NULL DEFAULT 'local',
+			idempotency_key TEXT,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			started_at TEXT,
+			finished_at TEXT
+		)`,
+		`INSERT INTO summary_runs_new (
+			id, status, stage, input_type,
+			source_url, input_text,
+			youtube_video_id, youtube_title,
+			engine, model, prompt,
+			format, truncated,
+			transcript, transcript_chars,
+			transcript_with_timestamps, transcript_with_timestamps_chars,
+			summary, summary_chars,
+			error_code, error_message,
+			stderr, command,
+			event_id, event_published_at,
+			workflow_instance_id, workflow_execution_id,
+			owner_id, idempotency_key,
+			created_at, updated_at, started_at, finished_at
+		) SELECT
+			id, status, stage, input_type,
+			source_url, input_text,
+			youtube_video_id, youtube_title,
+			engine, model, prompt,
+			format, truncated,
+			transcript, transcript_chars,
+			transcript_with_timestamps, transcript_with_timestamps_chars,
+			summary, summary_chars,
+			error_code, error_message,
+			stderr, command,
+			event_id, event_published_at,
+			workflow_instance_id, workflow_execution_id,
+			owner_id, idempotency_key,
+			created_at, updated_at, started_at, finished_at
+		FROM summary_runs`,
+		`DROP TABLE summary_runs`,
+		`ALTER TABLE summary_runs_new RENAME TO summary_runs`,
+		// Recreate indexes (the DROP TABLE removed them)
+		`CREATE INDEX IF NOT EXISTS idx_summary_runs_format ON summary_runs(format)`,
+		`CREATE INDEX IF NOT EXISTS idx_summary_runs_youtube_dedup ON summary_runs(youtube_video_id, status, format, engine, model)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_summary_runs_idempotency ON summary_runs(owner_id, idempotency_key) WHERE idempotency_key IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_summary_runs_owner ON summary_runs(owner_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_summary_runs_status ON summary_runs(status)`,
+		`CREATE INDEX IF NOT EXISTS idx_summary_runs_created_at ON summary_runs(created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_summary_runs_workflow_instance_id ON summary_runs(workflow_instance_id)`,
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	for _, stmt := range steps {
+		if _, err := tx.Exec(stmt); err != nil {
+			return fmt.Errorf("migration step failed: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("migration commit: %w", err)
+	}
+	slog.Info("Migrated status CHECK constraint to include 'cancelled'")
+	return nil
 }
 
 // Close closes the database connection.
