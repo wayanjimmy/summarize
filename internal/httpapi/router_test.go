@@ -55,3 +55,22 @@ func TestDiagNotMountedWithoutBackend(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rr.Code, http.StatusNotFound)
 	}
 }
+
+func TestAgentFeedbackSessionIsSetByHandler(t *testing.T) {
+	var got string
+	productHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		setAgentFeedbackSession(r, "run-123")
+		w.WriteHeader(http.StatusAccepted)
+	})
+	observer := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		productHandler.ServeHTTP(w, r)
+		got = agentFeedbackSessionRef(r)
+	})
+	handler := withAgentFeedbackSession(observer)
+
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/summaries", nil))
+	if got != "run-123" {
+		t.Fatalf("session ref = %q, want %q", got, "run-123")
+	}
+}

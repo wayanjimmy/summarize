@@ -187,6 +187,7 @@ func (h *Handlers) CreateSummary(w http.ResponseWriter, r *http.Request) {
 			// Fall through — cache miss is non-fatal
 		} else if cachedRun != nil {
 			slog.Info("Cache hit", "video_id", videoID, "cached_run_id", cachedRun.ID)
+			setAgentFeedbackSession(r, cachedRun.ID)
 			writeJSON(w, http.StatusOK, CreateSummaryResponse{
 				RunID:     cachedRun.ID,
 				Status:    cachedRun.Status,
@@ -203,6 +204,7 @@ func (h *Handlers) CreateSummary(w http.ResponseWriter, r *http.Request) {
 			slog.Error("In-flight lookup failed", "error", err, "video_id", videoID)
 		} else if inFlightRun != nil {
 			slog.Info("In-flight dedup", "video_id", videoID, "existing_run_id", inFlightRun.ID, "status", inFlightRun.Status)
+			setAgentFeedbackSession(r, inFlightRun.ID)
 			writeJSON(w, http.StatusAccepted, CreateSummaryResponse{
 				RunID:     inFlightRun.ID,
 				Status:    inFlightRun.Status,
@@ -253,6 +255,7 @@ func (h *Handlers) CreateSummary(w http.ResponseWriter, r *http.Request) {
 	_ = h.Store.UpdateEventPublished(runID, evt.EventID, evt.CreatedAt)
 
 	// Return 202 Accepted
+	setAgentFeedbackSession(r, runID)
 	writeJSON(w, http.StatusAccepted, CreateSummaryResponse{
 		RunID:     runID,
 		Status:    domain.StatusQueued,
@@ -332,6 +335,7 @@ func (h *Handlers) GetRunStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "run not found")
 		return
 	}
+	setAgentFeedbackSession(r, run.ID)
 
 	resp := StatusResponse{
 		RunID:     run.ID,
@@ -364,6 +368,7 @@ func (h *Handlers) GetSummary(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "run not found")
 		return
 	}
+	setAgentFeedbackSession(r, run.ID)
 
 	resp := SummaryResponse{
 		RunID:           run.ID,

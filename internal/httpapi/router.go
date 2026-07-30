@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"os"
@@ -10,6 +11,32 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	agentfeedback "github.com/open-software-network/os-epode/sdk/go"
 )
+
+type agentFeedbackSessionKey struct{}
+
+type agentFeedbackSession struct {
+	ref string
+}
+
+func withAgentFeedbackSession(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		session := &agentFeedbackSession{}
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), agentFeedbackSessionKey{}, session)))
+	})
+}
+
+func setAgentFeedbackSession(r *http.Request, ref string) {
+	if session, ok := r.Context().Value(agentFeedbackSessionKey{}).(*agentFeedbackSession); ok {
+		session.ref = ref
+	}
+}
+
+func agentFeedbackSessionRef(r *http.Request) string {
+	if session, ok := r.Context().Value(agentFeedbackSessionKey{}).(*agentFeedbackSession); ok {
+		return session.ref
+	}
+	return ""
+}
 
 // NewRouter creates the router with all routes and Agent Feedback middleware.
 func NewRouter(h *Handlers, diagBackend diag.Backend) http.Handler {
@@ -41,8 +68,9 @@ func NewRouter(h *Handlers, diagBackend diag.Backend) http.Handler {
 	apiKey := os.Getenv("AGENT_FEEDBACK_KEY")
 	if apiKey != "" {
 		opts := agentfeedback.Options{
-			APIKey:  apiKey,
-			Include: []string{"/v1/summaries"},
+			APIKey:     apiKey,
+			Include:    []string{"/v1/summaries", "/v1/summaries/**", "/v1/runs/**/status"},
+			SessionRef: agentFeedbackSessionRef,
 		}
 		if endpoint := os.Getenv("AGENT_FEEDBACK_ENDPOINT"); endpoint != "" {
 			opts.Endpoint = endpoint
@@ -51,9 +79,8 @@ func NewRouter(h *Handlers, diagBackend diag.Backend) http.Handler {
 		if err != nil {
 			log.Fatal(err)
 		}
-		return feedback.Middleware(r)
+		return withAgentFeedbackSession(feedback.Middleware(r))
 	}
 
 	return r
 }
-
