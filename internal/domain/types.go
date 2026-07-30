@@ -9,6 +9,7 @@ const (
 	StatusRunning   = "running"
 	StatusSucceeded = "succeeded"
 	StatusFailed    = "failed"
+	StatusCancelled = "cancelled"
 )
 
 // Stage constants track workflow progress.
@@ -19,7 +20,20 @@ const (
 	StageSummarizing        = "summarizing"
 	StageDone               = "done"
 	StageFailed             = "failed"
+	StageCancelled          = "cancelled"
 )
+
+// IsTerminalStatus returns true if the status is a terminal state
+// (succeeded, failed, or cancelled).
+func IsTerminalStatus(status string) bool {
+	return status == StatusSucceeded || status == StatusFailed || status == StatusCancelled
+}
+
+// IsCancellableStatus returns true if the status can be cancelled
+// (queued or running).
+func IsCancellableStatus(status string) bool {
+	return status == StatusQueued || status == StatusRunning
+}
 
 // Input type constants.
 const (
@@ -52,6 +66,9 @@ const (
 // Run represents a summarization run in the app database.
 type Run struct {
 	ID string
+
+	OwnerID        string // authenticated principal who owns this run
+	IdempotencyKey string // client-supplied key for stateless retry dedup
 
 	Status string
 	Stage  string

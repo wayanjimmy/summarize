@@ -11,18 +11,65 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/wayanjimmy/summarize/internal/config"
 	"github.com/wayanjimmy/summarize/internal/domain"
 	"github.com/wayanjimmy/summarize/internal/engine"
+	"github.com/wayanjimmy/summarize/internal/events"
 	"github.com/wayanjimmy/summarize/internal/store"
+	"github.com/wayanjimmy/summarize/internal/summary"
 )
+
+type testLister struct {
+	name   string
+	models []string
+	err    error
+}
+
+func (l *testLister) Name() string { return l.name }
+
+func (l *testLister) ListModels(context.Context) ([]string, error) {
+	return l.models, l.err
+}
+
+type mockPublisher struct {
+	err error
+}
+
+func (m *mockPublisher) PublishSummaryRequested(runID string) (*events.SummaryRequested, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return &events.SummaryRequested{
+		EventID:   uuid.NewString(),
+		EventType: "summary.requested",
+		RunID:     runID,
+		CreatedAt: time.Now().UTC(),
+	}, nil
+}
+
+// newReqWithChiParam creates a request with chi URL params set, since
+// chi.URLParam requires a chi route context.
+func newReqWithChiParam(method, target string, body string, runID string) *http.Request {
+	var bodyReader strings.Reader
+	if body != "" {
+		bodyReader = *strings.NewReader(body)
+	}
+	req := httptest.NewRequest(method, target, &bodyReader)
+	chiCtx := chi.NewRouteContext()
+	chiCtx.URLParams.Add("run_id", runID)
+	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, chiCtx))
+}
 
 func TestListModelsPartialFailure(t *testing.T) {
 	h := &Handlers{
-		Config: &config.Config{},
-		Models: engine.NewModelCatalog(0,
-			&testLister{name: "pi", models: []string{"pi-model"}},
-			&testLister{name: "agy", err: errors.New("offline")},
+		Service: summary.NewService(nil, nil,
+			engine.NewModelCatalog(0,
+				&testLister{name: "pi", models: []string{"pi-model"}},
+				&testLister{name: "agy", err: errors.New("offline")},
+			),
+			summary.ServiceConfig{},
 		),
 	}
 	rr := httptest.NewRecorder()
@@ -38,96 +85,25 @@ func TestListModelsPartialFailure(t *testing.T) {
 	}
 }
 
-func TestResolveModelValidation(t *testing.T) {
-	h := &Handlers{
-		Config: &config.Config{PiModel: "default"},
-		Models: engine.NewModelCatalog(0, &testLister{name: "pi", models: []string{"default", "ok"}}),
-	}
-	if got, status, err := h.resolveModel(context.Background(), "pi", "ok"); err != nil || status != 0 || got != "ok" {
-		t.Fatalf("valid model = %q, %d, %v", got, status, err)
-	}
-	if _, status, err := h.resolveModel(context.Background(), "pi", "bad"); err == nil || status != http.StatusBadRequest {
-		t.Fatalf("invalid model status = %d, err = %v", status, err)
-	}
-	h.Models = engine.NewModelCatalog(0, &testLister{name: "pi", err: errors.New("offline")})
-	if _, status, err := h.resolveModel(context.Background(), "pi", "ok"); err == nil || status != http.StatusServiceUnavailable {
-		t.Fatalf("offline status = %d, err = %v", status, err)
-	}
-	if got, status, err := h.resolveModel(context.Background(), "pi", ""); err != nil || status != 0 || got != "default" {
-		t.Fatalf("offline default = %q, %d, %v", got, status, err)
-	}
-
-	h.Models = engine.NewModelCatalog(0, &testLister{name: "pi", models: []string{}})
-	if got, status, err := h.resolveModel(context.Background(), "pi", ""); err != nil || status != 0 || got != "default" {
-		t.Fatalf("empty default = %q, %d, %v", got, status, err)
-	}
-	if _, status, err := h.resolveModel(context.Background(), "pi", "ok"); err == nil || status != http.StatusServiceUnavailable {
-		t.Fatalf("empty explicit status = %d, err = %v", status, err)
-	}
-}
-
-type testLister struct {
-	name   string
-	models []string
-	err    error
-}
-
-func (l *testLister) Name() string { return l.name }
-
-func (l *testLister) ListModels(context.Context) ([]string, error) {
-	return l.models, l.err
-}
-
 func TestCreateSummary_FormatValidation(t *testing.T) {
-	tests := []struct {
-		name   string
-		body   string
-		status int
-	}{
-		{
-			name:   "valid format summary",
-			body:   `{"text":"hello","format":"summary"}`,
-			status: http.StatusBadRequest, // will fail because no store, but format is valid
-		},
-		{
-			name:   "valid format chapters",
-			body:   `{"text":"hello","format":"chapters"}`,
-			status: http.StatusBadRequest, // chapters + text → 400, format validation passes but compatibility check fails
-		},
-		{
-			name:   "invalid format",
-			body:   `{"text":"hello","format":"invalid"}`,
-			status: http.StatusBadRequest,
-		},
-		{
-			name:   "omitted format defaults to summary",
-			body:   `{"text":"hello"}`,
-			status: http.StatusBadRequest, // will fail because no store — format defaulted successfully
-		},
+	h := &Handlers{
+		Service: summary.NewService(nil, nil, nil, summary.ServiceConfig{}),
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Need full Handlers to test — for format validation, we can get to 400
-			// without store by testing invalid format
-			if tt.name == "invalid format" {
-				h := &Handlers{Config: &config.Config{}}
-				rr := httptest.NewRecorder()
-				req := httptest.NewRequest(http.MethodPost, "/v1/summaries", strings.NewReader(tt.body))
-				h.CreateSummary(rr, req)
-				if rr.Code != tt.status {
-					t.Errorf("status = %d, want %d; body = %s", rr.Code, tt.status, rr.Body.String())
-				}
-				if !strings.Contains(rr.Body.String(), "format must be one of") {
-					t.Errorf("expected format validation error, got: %s", rr.Body.String())
-				}
-			}
-		})
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/summaries", strings.NewReader(`{"text":"hello","format":"invalid"}`))
+	h.CreateSummary(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400; body = %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "format must be one of") {
+		t.Errorf("expected format validation error, got: %s", rr.Body.String())
 	}
 }
 
 func TestCreateSummary_ChaptersWithTextRejected(t *testing.T) {
-	h := &Handlers{Config: &config.Config{}}
+	h := &Handlers{
+		Service: summary.NewService(nil, nil, nil, summary.ServiceConfig{}),
+	}
 	body := `{"text":"some long text","format":"chapters"}`
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/summaries", strings.NewReader(body))
@@ -147,7 +123,6 @@ func TestCreateSummary_CacheHitReturns200(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 
-	// Seed a successful cached run
 	s.CreateRun(&domain.Run{
 		ID: "cached-run-1", Status: domain.StatusSucceeded, Stage: domain.StageDone,
 		InputType: domain.InputTypeYouTube, SourceURL: "https://youtube.com/watch?v=abc123",
@@ -155,16 +130,16 @@ func TestCreateSummary_CacheHitReturns200(t *testing.T) {
 		Format: "summary", Prompt: config.DefaultPrompt,
 	})
 
-	cfg := &config.Config{
-		DefaultEngine: "pi",
-		DefaultPrompt:  config.DefaultPrompt,
-		PiModel:       "pi-model",
-		CacheTTL:      7 * 24 * time.Hour,
-	}
 	h := &Handlers{
-		Store:  s,
-		Config: cfg,
-		Models: engine.NewModelCatalog(0, &testLister{name: "pi", models: []string{"pi-model"}}),
+		Service: summary.NewService(s, nil,
+			engine.NewModelCatalog(0, &testLister{name: "pi", models: []string{"pi-model"}}),
+			summary.ServiceConfig{
+				DefaultEngine: "pi",
+				DefaultPrompt: config.DefaultPrompt,
+				PiModel:       "pi-model",
+				CacheTTL:      7 * 24 * time.Hour,
+			},
+		),
 	}
 
 	body := `{"url":"https://youtube.com/watch?v=abc123"}`
@@ -195,7 +170,6 @@ func TestCreateSummary_InFlightDedupReturns202(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 
-	// Seed an in-flight run (queued)
 	s.CreateRun(&domain.Run{
 		ID: "inflight-1", Status: domain.StatusQueued, Stage: domain.StageQueued,
 		InputType: domain.InputTypeYouTube, SourceURL: "https://youtube.com/watch?v=xyz789",
@@ -203,16 +177,16 @@ func TestCreateSummary_InFlightDedupReturns202(t *testing.T) {
 		Format: "summary", Prompt: config.DefaultPrompt,
 	})
 
-	cfg := &config.Config{
-		DefaultEngine: "pi",
-		DefaultPrompt:  config.DefaultPrompt,
-		PiModel:       "pi-model",
-		CacheTTL:      7 * 24 * time.Hour,
-	}
 	h := &Handlers{
-		Store:  s,
-		Config: cfg,
-		Models: engine.NewModelCatalog(0, &testLister{name: "pi", models: []string{"pi-model"}}),
+		Service: summary.NewService(s, nil,
+			engine.NewModelCatalog(0, &testLister{name: "pi", models: []string{"pi-model"}}),
+			summary.ServiceConfig{
+				DefaultEngine: "pi",
+				DefaultPrompt: config.DefaultPrompt,
+				PiModel:       "pi-model",
+				CacheTTL:      7 * 24 * time.Hour,
+			},
+		),
 	}
 
 	body := `{"url":"https://youtu.be/xyz789"}`
@@ -243,7 +217,6 @@ func TestCreateSummary_CustomPromptBypassesCache(t *testing.T) {
 	}
 	t.Cleanup(func() { s.Close() })
 
-	// Seed a successful cached run with default prompt
 	s.CreateRun(&domain.Run{
 		ID: "cached-default", Status: domain.StatusSucceeded, Stage: domain.StageDone,
 		InputType: domain.InputTypeYouTube, SourceURL: "https://youtube.com/watch?v=abc123",
@@ -251,47 +224,187 @@ func TestCreateSummary_CustomPromptBypassesCache(t *testing.T) {
 		Format: "summary", Prompt: config.DefaultPrompt,
 	})
 
-	cfg := &config.Config{
-		DefaultEngine: "pi",
-		DefaultPrompt:  config.DefaultPrompt,
-		PiModel:       "pi-model",
-		CacheTTL:      7 * 24 * time.Hour,
-	}
 	h := &Handlers{
-		Store:  s,
-		Config: cfg,
-		Models: engine.NewModelCatalog(0, &testLister{name: "pi", models: []string{"pi-model"}}),
-		// No publisher — cache bypass is what we're testing.
-		// The handler will proceed past dedup and then panic on nil publisher.
+		Service: summary.NewService(s, &mockPublisher{},
+			engine.NewModelCatalog(0, &testLister{name: "pi", models: []string{"pi-model"}}),
+			summary.ServiceConfig{
+				DefaultEngine: "pi",
+				DefaultPrompt: config.DefaultPrompt,
+				PiModel:       "pi-model",
+				CacheTTL:      7 * 24 * time.Hour,
+			},
+		),
 	}
 
 	body := `{"url":"https://youtube.com/watch?v=abc123","prompt":"Custom special prompt"}`
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/summaries", strings.NewReader(body))
-
-	// Cache bypass means the handler gets past dedup and hits the nil Publisher.
-	// We recover from the panic and verify no cache-hit response was written.
-	defer func() {
-		if r := recover(); r != nil {
-			// Panic from nil publisher — proves request proceeded past dedup (not a cache hit)
-			if rr.Code == http.StatusOK {
-				var resp CreateSummaryResponse
-				json.NewDecoder(rr.Body).Decode(&resp)
-				if resp.Cached {
-					t.Fatal("custom prompt should bypass cache, but got cache hit")
-				}
-			}
-			return
-		}
-		// No panic — check response is not a cache hit
-		if rr.Code == http.StatusOK {
-			var resp CreateSummaryResponse
-			json.NewDecoder(rr.Body).Decode(&resp)
-			if resp.Cached {
-				t.Fatal("custom prompt should bypass cache, but got cache hit")
-			}
-		}
-	}()
-
 	h.CreateSummary(rr, req)
+
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body = %s", rr.Code, rr.Body.String())
+	}
+
+	var resp CreateSummaryResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if resp.Cached {
+		t.Fatal("custom prompt should bypass cache, but got cache hit")
+	}
+}
+
+// --- Cancel handler tests ---
+
+func TestCancelRun_QueuedRun(t *testing.T) {
+	s, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	s.CreateRun(&domain.Run{
+		ID: "queued-1", Status: domain.StatusQueued, Stage: domain.StageQueued,
+		InputType: domain.InputTypeText, Engine: domain.EnginePi,
+		Format: "summary", Prompt: "test",
+	})
+
+	h := &Handlers{Service: summary.NewService(s, nil, nil, summary.ServiceConfig{})}
+	rr := httptest.NewRecorder()
+	req := newReqWithChiParam(http.MethodDelete, "/v1/runs/queued-1", "", "queued-1")
+	h.CancelRun(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rr.Code, rr.Body.String())
+	}
+
+	var resp TaskResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if resp.Status != domain.StatusCancelled {
+		t.Errorf("Status = %q, want %q", resp.Status, domain.StatusCancelled)
+	}
+	if resp.Message != "run cancelled" {
+		t.Errorf("Message = %q, want %q", resp.Message, "run cancelled")
+	}
+}
+
+func TestCancelRun_SucceededRejected(t *testing.T) {
+	s, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	s.CreateRun(&domain.Run{
+		ID: "done-1", Status: domain.StatusSucceeded, Stage: domain.StageDone,
+		InputType: domain.InputTypeText, Engine: domain.EnginePi,
+		Format: "summary", Prompt: "test", Summary: "result",
+	})
+
+	h := &Handlers{Service: summary.NewService(s, nil, nil, summary.ServiceConfig{})}
+	rr := httptest.NewRecorder()
+	req := newReqWithChiParam(http.MethodDelete, "/v1/runs/done-1", "", "done-1")
+	h.CancelRun(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCancelRun_NotFound(t *testing.T) {
+	s, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	h := &Handlers{Service: summary.NewService(s, nil, nil, summary.ServiceConfig{})}
+	rr := httptest.NewRecorder()
+	req := newReqWithChiParam(http.MethodDelete, "/v1/runs/nonexistent", "", "nonexistent")
+	h.CancelRun(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %s", rr.Code, rr.Body.String())
+	}
+}
+
+// --- Update handler tests ---
+
+func TestUpdateRun_QueuedPrompt(t *testing.T) {
+	s, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	s.CreateRun(&domain.Run{
+		ID: "queued-1", Status: domain.StatusQueued, Stage: domain.StageQueued,
+		InputType: domain.InputTypeText, Engine: domain.EnginePi,
+		Format: "summary", Prompt: "old prompt",
+	})
+
+	h := &Handlers{Service: summary.NewService(s, nil, nil, summary.ServiceConfig{})}
+	rr := httptest.NewRecorder()
+	req := newReqWithChiParam(http.MethodPatch, "/v1/runs/queued-1", `{"prompt":"new prompt"}`, "queued-1")
+	h.UpdateRun(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", rr.Code, rr.Body.String())
+	}
+
+	var resp TaskResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode error: %v", err)
+	}
+	if resp.Status != domain.StatusQueued {
+		t.Errorf("Status = %q, want %q", resp.Status, domain.StatusQueued)
+	}
+
+	// Verify prompt was persisted
+	run, _ := s.GetRun("queued-1")
+	if run.Prompt != "new prompt" {
+		t.Errorf("Prompt = %q, want %q", run.Prompt, "new prompt")
+	}
+}
+
+func TestUpdateRun_RunningRejected(t *testing.T) {
+	s, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	s.CreateRun(&domain.Run{
+		ID: "running-1", Status: domain.StatusRunning, Stage: domain.StageSummarizing,
+		InputType: domain.InputTypeText, Engine: domain.EnginePi,
+		Format: "summary", Prompt: "old",
+	})
+
+	h := &Handlers{Service: summary.NewService(s, nil, nil, summary.ServiceConfig{})}
+	rr := httptest.NewRecorder()
+	req := newReqWithChiParam(http.MethodPatch, "/v1/runs/running-1", `{"prompt":"new"}`, "running-1")
+	h.UpdateRun(rr, req)
+
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body = %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestUpdateRun_NotFound(t *testing.T) {
+	s, err := store.New(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("New() error: %v", err)
+	}
+	t.Cleanup(func() { s.Close() })
+
+	h := &Handlers{Service: summary.NewService(s, nil, nil, summary.ServiceConfig{})}
+	rr := httptest.NewRecorder()
+	req := newReqWithChiParam(http.MethodPatch, "/v1/runs/nonexistent", `{"prompt":"new"}`, "nonexistent")
+	h.UpdateRun(rr, req)
+
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404; body = %s", rr.Code, rr.Body.String())
+	}
 }

@@ -39,7 +39,10 @@ func agentFeedbackSessionRef(r *http.Request) string {
 }
 
 // NewRouter creates the router with all routes and Agent Feedback middleware.
-func NewRouter(h *Handlers, diagBackend diag.Backend) http.Handler {
+// If mcpHandler is non-nil, it is mounted at POST /mcp outside the Agent
+// Feedback middleware surface. If restrictDiag is true, the /diag endpoint
+// is not mounted (for production deployments with auth enabled).
+func NewRouter(h *Handlers, mcpHandler http.Handler, diagBackend diag.Backend, restrictDiag bool) http.Handler {
 	r := chi.NewRouter()
 
 	// Middleware
@@ -50,7 +53,7 @@ func NewRouter(h *Handlers, diagBackend diag.Backend) http.Handler {
 	// Health check
 	r.Get("/healthz", h.Healthz)
 
-	if diagBackend != nil {
+	if diagBackend != nil && !restrictDiag {
 		r.Get("/diag", func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/diag/", http.StatusMovedPermanently)
 		})
@@ -63,7 +66,14 @@ func NewRouter(h *Handlers, diagBackend diag.Backend) http.Handler {
 		r.Post("/summaries", h.CreateSummary)
 		r.Get("/summaries/{run_id}", h.GetSummary)
 		r.Get("/runs/{run_id}/status", h.GetRunStatus)
+		r.Delete("/runs/{run_id}", h.CancelRun)
+		r.Patch("/runs/{run_id}", h.UpdateRun)
 	})
+
+	// MCP endpoint (stateless 2026-07-28, POST only)
+	if mcpHandler != nil {
+		r.Method(http.MethodPost, "/mcp", mcpHandler)
+	}
 
 	apiKey := os.Getenv("AGENT_FEEDBACK_KEY")
 	if apiKey != "" {

@@ -1,6 +1,7 @@
 package workflow
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -17,6 +18,19 @@ type SummaryWorkflowInput struct {
 func SummaryWorkflow(ctx workflow.Context, input SummaryWorkflowInput) error {
 	logger := workflow.Logger(ctx)
 	logger.Info("Starting summary workflow", "run_id", input.RunID)
+
+	// Deferred cancellation cleanup: if the workflow is cancelled while
+	// waiting on an activity, mark the run as cancelled using a disconnected
+	// context (which allows scheduling one final cleanup activity).
+	defer func() {
+		if errors.Is(ctx.Err(), workflow.Canceled) {
+			logger.Info("Workflow cancelled, running cleanup", "run_id", input.RunID)
+			cleanupCtx := workflow.NewDisconnectedContext(ctx)
+			_, _ = workflow.ExecuteActivity[any](
+				cleanupCtx, workflow.DefaultActivityOptions, CancelRunActivity, input.RunID,
+			).Get(cleanupCtx)
+		}
+	}()
 
 	// Mark as running
 	_, err := workflow.ExecuteActivity[any](ctx, workflow.DefaultActivityOptions, MarkRunningActivity, input.RunID).Get(ctx)

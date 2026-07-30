@@ -23,7 +23,10 @@ import (
 	"github.com/wayanjimmy/summarize/internal/engine"
 	"github.com/wayanjimmy/summarize/internal/events"
 	"github.com/wayanjimmy/summarize/internal/httpapi"
+	"github.com/wayanjimmy/summarize/internal/mcpauth"
+	"github.com/wayanjimmy/summarize/internal/mcpserver"
 	"github.com/wayanjimmy/summarize/internal/store"
+	"github.com/wayanjimmy/summarize/internal/summary"
 	"github.com/wayanjimmy/summarize/internal/workflow"
 )
 
@@ -115,6 +118,7 @@ func main() {
 	w.RegisterActivity(workflow.FetchTranscriptActivity)
 	w.RegisterActivity(workflow.SummarizeActivity)
 	w.RegisterActivity(workflow.FailRunActivity)
+	w.RegisterActivity(workflow.CancelRunActivity)
 
 	if err := w.Start(ctx); err != nil {
 		log.Fatalf("Failed to start worker: %v", err)
@@ -139,17 +143,48 @@ func main() {
 		slog.Error("Failed to recover queued runs", "error", err)
 	}
 
+	// Create shared model catalog (constructed once, shared by REST and future MCP)
+	modelCatalog := engine.NewModelCatalog(engine.DefaultModelCatalogTTL, piEngine, agyEngine)
+
+	// Create summary service (protocol-neutral, shared by REST and future MCP)
+	summaryService := summary.NewService(appStore, publisher, modelCatalog, summary.ServiceConfig{
+		DefaultEngine: cfg.DefaultEngine,
+		DefaultPrompt: cfg.DefaultPrompt,
+		PiModel:       cfg.PiModel,
+		AgyModel:      cfg.AgyModel,
+		CacheTTL:      cfg.CacheTTL,
+	})
+	summaryService.SetCanceller(starter)
+
 	// Create HTTP handlers
 	handlers := &httpapi.Handlers{
-		Store:     appStore,
-		Config:    cfg,
-		Publisher: publisher,
-		Models:    engine.NewModelCatalog(engine.DefaultModelCatalogTTL, piEngine, agyEngine),
+		Service: summaryService,
+	}
+
+	// Create MCP handler (stateless 2026-07-28)
+	var mcpHandler http.Handler
+	if cfg.MCPEnable {
+		rawMCP := mcpserver.NewHandler(summaryService, version)
+		// Wrap with auth middleware
+		authCfg := mcpauth.Config{
+			Mode:   cfg.MCPAuthMode,
+			APIKey: cfg.MCPAPIKey,
+			OAuth: mcpauth.OAuthConfig{
+				Issuer:  cfg.MCPOAuthISS,
+				JWKSURL: cfg.MCPOAuthJWKS,
+				Audience: cfg.MCPOAuthAud,
+			},
+		}
+		mcpHandler = mcpauth.Middleware(authCfg)(rawMCP)
+		slog.Info("MCP endpoint enabled", "auth_mode", cfg.MCPAuthMode)
+	} else {
+		slog.Info("MCP endpoint disabled")
 	}
 
 	// Create router
 	diagBackend, _ := any(wfBackend).(diag.Backend)
-	router := httpapi.NewRouter(handlers, diagBackend)
+	restrictDiag := cfg.MCPAuthMode != "" && cfg.MCPAuthMode != "none"
+	router := httpapi.NewRouter(handlers, mcpHandler, diagBackend, restrictDiag)
 
 	// Start HTTP server
 	srv := &http.Server{

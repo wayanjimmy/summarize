@@ -3,9 +3,11 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/wayanjimmy/summarize/internal/domain"
+	"github.com/wayanjimmy/summarize/internal/summary"
 )
 
 // ErrorResponse is the standard error JSON shape.
@@ -78,6 +80,14 @@ type YouTubeInfo struct {
 	Title   string `json:"title"`
 }
 
+// TaskResponse is returned by cancel/update endpoints.
+type TaskResponse struct {
+	RunID   string `json:"run_id"`
+	Status  string `json:"status"`
+	Stage   string `json:"stage"`
+	Message string `json:"message,omitempty"`
+}
+
 // writeJSON writes a JSON response with the given status code.
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -91,4 +101,23 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	resp.Error.Code = code
 	resp.Error.Message = message
 	writeJSON(w, status, resp)
+}
+
+// writeServiceError maps a summary.Service error to an HTTP error response.
+func writeServiceError(w http.ResponseWriter, err error) {
+	var se *summary.Error
+	if errors.As(err, &se) {
+		switch se.Category {
+		case summary.CategoryInvalidInput:
+			writeError(w, http.StatusBadRequest, "invalid_request", se.Message)
+		case summary.CategoryNotFound:
+			writeError(w, http.StatusNotFound, "not_found", se.Message)
+		case summary.CategoryServiceUnavailable:
+			writeError(w, http.StatusServiceUnavailable, "service_unavailable", se.Message)
+		default:
+			writeError(w, http.StatusInternalServerError, "server_error", se.Message)
+		}
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "server_error", err.Error())
 }

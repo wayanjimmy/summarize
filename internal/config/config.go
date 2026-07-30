@@ -44,6 +44,14 @@ type Config struct {
 
 	// Cache
 	CacheTTL time.Duration
+
+	// MCP auth
+	MCPAuthMode   string // none, static, oauth
+	MCPAPIKey     string // for static mode
+	MCPOAuthISS   string // expected issuer for oauth mode
+	MCPOAuthJWKS  string // JWKS URL for oauth mode
+	MCPOAuthAud   string // expected audience for oauth mode (optional)
+	MCPEnable     bool   // whether MCP endpoint is mounted
 }
 
 // DefaultPrompt is the built-in fallback summarization instruction.
@@ -107,6 +115,14 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("invalid SUMMARIZE_CACHE_TTL: %w", err)
 	}
 
+	// MCP auth configuration
+	mcpAuthMode := cmp.Or(os.Getenv("MCP_AUTH_MODE"), "none")
+	mcpAPIKey := os.Getenv("MCP_API_KEY")
+	mcpOAuthISS := os.Getenv("MCP_OAUTH_ISSUER")
+	mcpOAuthJWKS := os.Getenv("MCP_OAUTH_JWKS_URL")
+	mcpOAuthAud := os.Getenv("MCP_OAUTH_AUDIENCE")
+	mcpEnable := os.Getenv("MCP_ENABLE") != "0" // enabled by default
+
 	cfg := &Config{
 		Port:            port,
 		DataDir:         dataDir,
@@ -126,6 +142,12 @@ func Load() (*Config, error) {
 		NATSPort:        natsPort,
 		NATSSubject:     natsSubject,
 		CacheTTL:        cacheTTL,
+		MCPAuthMode:     mcpAuthMode,
+		MCPAPIKey:       mcpAPIKey,
+		MCPOAuthISS:     mcpOAuthISS,
+		MCPOAuthJWKS:    mcpOAuthJWKS,
+		MCPOAuthAud:     mcpOAuthAud,
+		MCPEnable:       mcpEnable,
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -151,6 +173,23 @@ func (c *Config) Validate() error {
 	}
 	if c.CacheTTL <= 0 {
 		return fmt.Errorf("SUMMARIZE_CACHE_TTL must be positive")
+	}
+	switch c.MCPAuthMode {
+	case "", "none", "static", "oauth":
+		// valid
+	default:
+		return fmt.Errorf("MCP_AUTH_MODE must be 'none', 'static', or 'oauth', got %q", c.MCPAuthMode)
+	}
+	if c.MCPAuthMode == "static" && c.MCPAPIKey == "" {
+		return fmt.Errorf("MCP_API_KEY is required when MCP_AUTH_MODE=static")
+	}
+	if c.MCPAuthMode == "oauth" {
+		if c.MCPOAuthISS == "" {
+			return fmt.Errorf("MCP_OAUTH_ISSUER is required when MCP_AUTH_MODE=oauth")
+		}
+		if c.MCPOAuthJWKS == "" {
+			return fmt.Errorf("MCP_OAUTH_JWKS_URL is required when MCP_AUTH_MODE=oauth")
+		}
 	}
 	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 
 	"github.com/cschleiden/go-workflows/client"
+	goworkflow "github.com/cschleiden/go-workflows/workflow"
 	"github.com/wayanjimmy/summarize/internal/domain"
 	"github.com/wayanjimmy/summarize/internal/events"
 )
@@ -130,4 +131,15 @@ func makeInstanceID(run *domain.Run) string {
 		shortID = shortID[:8]
 	}
 	return fmt.Sprintf("summary:%s:%s:%s", inputType, engine, shortID)
+}
+
+// Cancel cancels a workflow instance by its stored IDs.
+// It reconstructs the workflow.Instance from the instance and execution IDs
+// persisted in the app database and calls the go-workflows client to cancel it.
+func (s *Starter) Cancel(ctx context.Context, instanceID, executionID string) error {
+	instance := &goworkflow.Instance{
+		InstanceID:  instanceID,
+		ExecutionID: executionID,
+	}
+	return s.wfClient.CancelWorkflowInstance(ctx, instance)
 }

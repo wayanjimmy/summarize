@@ -29,6 +29,7 @@ const runColumns = `
 	stderr, command,
 	event_id, event_published_at,
 	workflow_instance_id, workflow_execution_id,
+	owner_id, idempotency_key,
 	created_at, updated_at, started_at, finished_at
 `
 
@@ -94,6 +95,28 @@ func New(dbPath string) (*Store, error) {
 		return nil, fmt.Errorf("create youtube dedup index: %w", err)
 	}
 
+	// Migrate: add owner_id and idempotency_key columns (Phase 3 auth hardening).
+	if _, err := db.Exec("ALTER TABLE summary_runs ADD COLUMN owner_id TEXT NOT NULL DEFAULT 'local'"); err != nil && !isDuplicateColumnError(err) {
+		db.Close()
+		return nil, fmt.Errorf("migrate owner_id column: %w", err)
+	}
+	if _, err := db.Exec("ALTER TABLE summary_runs ADD COLUMN idempotency_key TEXT"); err != nil && !isDuplicateColumnError(err) {
+		db.Close()
+		return nil, fmt.Errorf("migrate idempotency_key column: %w", err)
+	}
+
+	// Partial unique index for idempotency: prevents duplicate work per (owner, key).
+	if _, err := db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_summary_runs_idempotency ON summary_runs(owner_id, idempotency_key) WHERE idempotency_key IS NOT NULL"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create idempotency index: %w", err)
+	}
+
+	// Index for owner-scoped queries.
+	if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_summary_runs_owner ON summary_runs(owner_id)"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("create owner index: %w", err)
+	}
+
 	return &Store{db: db}, nil
 }
 
@@ -111,6 +134,9 @@ func (s *Store) CreateRun(run *domain.Run) error {
 	if run.UpdatedAt.IsZero() {
 		run.UpdatedAt = now
 	}
+	if run.OwnerID == "" {
+		run.OwnerID = "local"
+	}
 
 	_, err := s.db.Exec(`
 		INSERT INTO summary_runs (
@@ -123,6 +149,7 @@ func (s *Store) CreateRun(run *domain.Run) error {
 			error_code, error_message, stderr, command,
 			event_id, event_published_at,
 			workflow_instance_id, workflow_execution_id,
+			owner_id, idempotency_key,
 			created_at, updated_at, started_at, finished_at
 		) VALUES (
 			?, ?, ?, ?, ?, ?,
@@ -132,6 +159,7 @@ func (s *Store) CreateRun(run *domain.Run) error {
 			?, ?,
 			?, ?,
 			?, ?, ?, ?,
+			?, ?,
 			?, ?,
 			?, ?,
 			?, ?, ?, ?
@@ -145,6 +173,7 @@ func (s *Store) CreateRun(run *domain.Run) error {
 		nullStr(run.ErrorCode), nullStr(run.ErrorMessage), nullStr(run.Stderr), nullStr(run.Command),
 		nullStr(run.EventID), nullTime(run.EventPublishedAt),
 		nullStr(run.WorkflowInstanceID), nullStr(run.WorkflowExecutionID),
+		run.OwnerID, nullStr(run.IdempotencyKey),
 		run.CreatedAt.Format(time.RFC3339Nano), run.UpdatedAt.Format(time.RFC3339Nano), nullTime(run.StartedAt), nullTime(run.FinishedAt),
 	)
 	if err != nil {
@@ -159,13 +188,21 @@ func (s *Store) GetRun(id string) (*domain.Run, error) {
 	return scanRun(row)
 }
 
+// GetRunForOwner retrieves a run by ID, scoped to the given owner.
+// Returns sql.ErrNoRows if the run does not exist or belongs to a different owner.
+func (s *Store) GetRunForOwner(id, ownerID string) (*domain.Run, error) {
+	row := s.db.QueryRow("SELECT "+runColumns+" FROM summary_runs WHERE id = ? AND owner_id = ?", id, ownerID)
+	return scanRun(row)
+}
+
 // MarkRunning sets status=running, stage=starting, started_at.
+// Only transitions from queued status; a cancelled run will not be overwritten.
 func (s *Store) MarkRunning(id string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.Exec(`
 		UPDATE summary_runs
 		SET status = 'running', stage = 'starting', started_at = ?, updated_at = ?
-		WHERE id = ?`,
+		WHERE id = ? AND status = 'queued'`,
 		now, now, id,
 	)
 	return err
@@ -213,19 +250,21 @@ func (s *Store) SaveTranscript(id, videoID, title, transcript string) error {
 }
 
 // SaveSucceeded marks the run as succeeded with the summary.
+// Only transitions from queued or running status; a cancelled run will not be overwritten.
 func (s *Store) SaveSucceeded(id, summary, stderr, command string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.Exec(`
 		UPDATE summary_runs
 		SET status = 'succeeded', stage = 'done', summary = ?, summary_chars = ?,
 		    stderr = ?, command = ?, finished_at = ?, updated_at = ?
-		WHERE id = ?`,
+		WHERE id = ? AND status IN ('queued', 'running')`,
 		summary, len(summary), stderr, command, now, now, id,
 	)
 	return err
 }
 
 // SaveFailed marks the run as failed with error details.
+// Only transitions from queued or running status; a cancelled run will not be overwritten.
 func (s *Store) SaveFailed(id, errorCode, errorMessage, stderr, command string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := s.db.Exec(`
@@ -233,7 +272,7 @@ func (s *Store) SaveFailed(id, errorCode, errorMessage, stderr, command string) 
 		SET status = 'failed', stage = 'failed',
 		    error_code = ?, error_message = ?, stderr = ?, command = ?,
 		    finished_at = ?, updated_at = ?
-		WHERE id = ?`,
+		WHERE id = ? AND status IN ('queued', 'running')`,
 		errorCode, errorMessage, stderr, command, now, now, id,
 	)
 	return err
@@ -247,8 +286,35 @@ func (s *Store) FailRunIfNotTerminal(id, errorCode, errorMessage string) error {
 		SET status = 'failed', stage = 'failed',
 		    error_code = ?, error_message = ?,
 		    finished_at = ?, updated_at = ?
-		WHERE id = ? AND status NOT IN ('succeeded', 'failed')`,
+		WHERE id = ? AND status NOT IN ('succeeded', 'failed', 'cancelled')`,
 		errorCode, errorMessage, now, now, id,
+	)
+	return err
+}
+
+// CancelRun marks a run as cancelled if it is in a cancellable state (queued or running).
+// Returns nil regardless of whether any row was affected (idempotent).
+func (s *Store) CancelRun(id string) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.Exec(`
+		UPDATE summary_runs
+		SET status = 'cancelled', stage = 'cancelled',
+		    finished_at = ?, updated_at = ?
+		WHERE id = ? AND status IN ('queued', 'running')`,
+		now, now, id,
+	)
+	return err
+}
+
+// UpdatePrompt updates the prompt for a run that is still queued.
+// Returns nil regardless of whether any row was affected.
+func (s *Store) UpdatePrompt(id, prompt string) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.Exec(`
+		UPDATE summary_runs
+		SET prompt = ?, updated_at = ?
+		WHERE id = ? AND status = 'queued'`,
+		prompt, now, id,
 	)
 	return err
 }
@@ -279,6 +345,16 @@ func (s *Store) FindQueuedRunsWithoutWorkflow() ([]domain.Run, error) {
 // FindCachedRun returns the most recent successful run for the given video, format, engine, and model
 // created after the given since time. Returns nil if no matching run exists.
 func (s *Store) FindCachedRun(videoID, format, engine, model string, since time.Time) (*domain.Run, error) {
+	return s.findCachedRunForOwner("local", videoID, format, engine, model, since)
+}
+
+// FindCachedRunForOwner returns the most recent successful run for the given owner,
+// video, format, engine, and model created after the given since time.
+func (s *Store) FindCachedRunForOwner(ownerID, videoID, format, engine, model string, since time.Time) (*domain.Run, error) {
+	return s.findCachedRunForOwner(ownerID, videoID, format, engine, model, since)
+}
+
+func (s *Store) findCachedRunForOwner(ownerID, videoID, format, engine, model string, since time.Time) (*domain.Run, error) {
 	sinceStr := since.Format(time.RFC3339Nano)
 	row := s.db.QueryRow(`
 		SELECT `+runColumns+` FROM summary_runs
@@ -287,10 +363,11 @@ func (s *Store) FindCachedRun(videoID, format, engine, model string, since time.
 		  AND format = ?
 		  AND engine = ?
 		  AND model = ?
+		  AND owner_id = ?
 		  AND created_at >= ?
 		ORDER BY created_at DESC
 		LIMIT 1`,
-		videoID, format, engine, model, sinceStr,
+		videoID, format, engine, model, ownerID, sinceStr,
 	)
 	run, err := scanRun(row)
 	if err == sql.ErrNoRows {
@@ -302,6 +379,16 @@ func (s *Store) FindCachedRun(videoID, format, engine, model string, since time.
 // FindInFlightRun returns the most recent in-flight (queued or running) run
 // for the given video, format, engine, and model. Returns nil if none exists.
 func (s *Store) FindInFlightRun(videoID, format, engine, model string) (*domain.Run, error) {
+	return s.findInFlightRunForOwner("local", videoID, format, engine, model)
+}
+
+// FindInFlightRunForOwner returns the most recent in-flight run for the given owner,
+// video, format, engine, and model. Returns nil if none exists.
+func (s *Store) FindInFlightRunForOwner(ownerID, videoID, format, engine, model string) (*domain.Run, error) {
+	return s.findInFlightRunForOwner(ownerID, videoID, format, engine, model)
+}
+
+func (s *Store) findInFlightRunForOwner(ownerID, videoID, format, engine, model string) (*domain.Run, error) {
 	row := s.db.QueryRow(`
 		SELECT `+runColumns+` FROM summary_runs
 		WHERE youtube_video_id = ?
@@ -309,15 +396,176 @@ func (s *Store) FindInFlightRun(videoID, format, engine, model string) (*domain.
 		  AND format = ?
 		  AND engine = ?
 		  AND model = ?
+		  AND owner_id = ?
 		ORDER BY created_at DESC
 		LIMIT 1`,
-		videoID, format, engine, model,
+		videoID, format, engine, model, ownerID,
 	)
 	run, err := scanRun(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	return run, err
+}
+
+// FindRunByIdempotencyKey returns a run matching the (owner_id, idempotency_key) pair.
+// Returns nil if no matching run exists.
+func (s *Store) FindRunByIdempotencyKey(ownerID, key string) (*domain.Run, error) {
+	row := s.db.QueryRow(`
+		SELECT `+runColumns+` FROM summary_runs
+		WHERE owner_id = ? AND idempotency_key = ?
+		ORDER BY created_at DESC
+		LIMIT 1`,
+		ownerID, key,
+	)
+	run, err := scanRun(row)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return run, err
+}
+
+// FindOrCreateRun atomically checks for an existing run (by idempotency key,
+// cache, or in-flight dedup) and creates a new one if none is found.
+//
+// The run's OwnerID, IdempotencyKey, YouTubeVideoID, Format, Engine, and Model
+// fields are used for the dedup lookups. cacheSince is the earliest creation
+// time for cache hits; a zero value disables the cache check.
+//
+// Returns (run, true, nil) if an existing run was found, or (run, false, nil)
+// if a new run was created. The run argument is mutated in place with defaults
+// (OwnerID, timestamps) before insertion.
+func (s *Store) FindOrCreateRun(run *domain.Run, cacheSince time.Time) (*domain.Run, bool, error) {
+	if run.OwnerID == "" {
+		run.OwnerID = "local"
+	}
+	now := time.Now().UTC()
+	if run.CreatedAt.IsZero() {
+		run.CreatedAt = now
+	}
+	if run.UpdatedAt.IsZero() {
+		run.UpdatedAt = now
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, false, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck
+
+	// 1. Idempotency lookup
+	if run.IdempotencyKey != "" {
+		row := tx.QueryRow(`
+			SELECT `+runColumns+` FROM summary_runs
+			WHERE owner_id = ? AND idempotency_key = ?
+			ORDER BY created_at DESC LIMIT 1`,
+			run.OwnerID, run.IdempotencyKey,
+		)
+		existing, err := scanRun(row)
+		if err == sql.ErrNoRows {
+			// no match — continue
+		} else if err != nil {
+			return nil, false, fmt.Errorf("idempotency lookup: %w", err)
+		} else {
+			return existing, true, nil
+		}
+	}
+
+	// 2. Cache lookup (YouTube dedup without custom prompt)
+	if run.YouTubeVideoID != "" && !cacheSince.IsZero() {
+		sinceStr := cacheSince.Format(time.RFC3339Nano)
+		row := tx.QueryRow(`
+			SELECT `+runColumns+` FROM summary_runs
+			WHERE youtube_video_id = ?
+			  AND status = 'succeeded'
+			  AND format = ?
+			  AND engine = ?
+			  AND model = ?
+			  AND owner_id = ?
+			  AND created_at >= ?
+			ORDER BY created_at DESC LIMIT 1`,
+			run.YouTubeVideoID, run.Format, run.Engine, run.Model, run.OwnerID, sinceStr,
+		)
+		existing, err := scanRun(row)
+		if err == sql.ErrNoRows {
+			// no match — continue
+		} else if err != nil {
+			return nil, false, fmt.Errorf("cache lookup: %w", err)
+		} else {
+			return existing, true, nil
+		}
+	}
+
+	// 3. In-flight dedup
+	if run.YouTubeVideoID != "" {
+		row := tx.QueryRow(`
+			SELECT `+runColumns+` FROM summary_runs
+			WHERE youtube_video_id = ?
+			  AND status IN ('queued', 'running')
+			  AND format = ?
+			  AND engine = ?
+			  AND model = ?
+			  AND owner_id = ?
+			ORDER BY created_at DESC LIMIT 1`,
+			run.YouTubeVideoID, run.Format, run.Engine, run.Model, run.OwnerID,
+		)
+		existing, err := scanRun(row)
+		if err == sql.ErrNoRows {
+			// no match — continue
+		} else if err != nil {
+			return nil, false, fmt.Errorf("in-flight lookup: %w", err)
+		} else {
+			return existing, true, nil
+		}
+	}
+
+	// 4. Create new run
+	_, err = tx.Exec(`
+		INSERT INTO summary_runs (
+			id, status, stage, input_type, source_url, input_text,
+			youtube_video_id, youtube_title, engine, model, prompt,
+			format, truncated,
+			transcript, transcript_chars,
+			transcript_with_timestamps, transcript_with_timestamps_chars,
+			summary, summary_chars,
+			error_code, error_message, stderr, command,
+			event_id, event_published_at,
+			workflow_instance_id, workflow_execution_id,
+			owner_id, idempotency_key,
+			created_at, updated_at, started_at, finished_at
+		) VALUES (
+			?, ?, ?, ?, ?, ?,
+			?, ?, ?, ?, ?,
+			?, ?,
+			?, ?,
+			?, ?,
+			?, ?,
+			?, ?, ?, ?,
+			?, ?,
+			?, ?,
+			?, ?,
+			?, ?, ?, ?
+		)`,
+		run.ID, run.Status, run.Stage, run.InputType, nullStr(run.SourceURL), nullStr(run.InputText),
+		nullStr(run.YouTubeVideoID), nullStr(run.YouTubeTitle), run.Engine, nullStr(run.Model), run.Prompt,
+		run.Format, boolInt(run.Truncated),
+		nullStr(run.Transcript), run.TranscriptChars,
+		nullStr(run.TranscriptWithTimestamps), run.TranscriptWithTimestampsChars,
+		nullStr(run.Summary), run.SummaryChars,
+		nullStr(run.ErrorCode), nullStr(run.ErrorMessage), nullStr(run.Stderr), nullStr(run.Command),
+		nullStr(run.EventID), nullTime(run.EventPublishedAt),
+		nullStr(run.WorkflowInstanceID), nullStr(run.WorkflowExecutionID),
+		run.OwnerID, nullStr(run.IdempotencyKey),
+		run.CreatedAt.Format(time.RFC3339Nano), run.UpdatedAt.Format(time.RFC3339Nano), nullTime(run.StartedAt), nullTime(run.FinishedAt),
+	)
+	if err != nil {
+		return nil, false, fmt.Errorf("insert run: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, false, fmt.Errorf("commit: %w", err)
+	}
+	return run, false, nil
 }
 
 // scanRun scans a row into a Run.
@@ -331,6 +579,7 @@ func scanRun(row *sql.Row) (*domain.Run, error) {
 	var eventID, wfInstID, wfExecID sql.NullString
 	var eventPublishedAt, startedAt, finishedAt sql.NullString
 	var createdAt, updatedAt string
+	var idempotencyKey sql.NullString
 
 	err := row.Scan(
 		&r.ID, &r.Status, &r.Stage, &r.InputType,
@@ -345,6 +594,7 @@ func scanRun(row *sql.Row) (*domain.Run, error) {
 		&stderr, &command,
 		&eventID, &eventPublishedAt,
 		&wfInstID, &wfExecID,
+		&r.OwnerID, &idempotencyKey,
 		&createdAt, &updatedAt, &startedAt, &finishedAt,
 	)
 	if err != nil {
@@ -372,6 +622,7 @@ func scanRun(row *sql.Row) (*domain.Run, error) {
 	r.FinishedAt = parseTime(finishedAt.String)
 
 	r.TranscriptWithTimestamps = tsTranscript.String
+	r.IdempotencyKey = idempotencyKey.String
 
 	return &r, nil
 }

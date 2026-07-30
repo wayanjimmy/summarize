@@ -166,3 +166,10 @@ func FailRunActivity(ctx context.Context, runID, code, message string) error {
 	slog.Info("FailRunActivity", "run_id", runID, "code", code, "message", message)
 	return deps.Store.FailRunIfNotTerminal(runID, code, message)
 }
+
+// CancelRunActivity marks a run as cancelled if it is still in a cancellable state.
+// Called from the workflow's deferred cancellation cleanup on a disconnected context.
+func CancelRunActivity(ctx context.Context, runID string) error {
+	slog.Info("CancelRunActivity", "run_id", runID)
+	return deps.Store.CancelRun(runID)
+}
