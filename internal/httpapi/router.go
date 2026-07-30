@@ -40,10 +40,14 @@ func NewRouter(h *Handlers, diagBackend diag.Backend) http.Handler {
 
 	apiKey := os.Getenv("AGENT_FEEDBACK_KEY")
 	if apiKey != "" {
-		feedback, err := agentfeedback.New(agentfeedback.Options{
+		opts := agentfeedback.Options{
 			APIKey:  apiKey,
 			Include: []string{"/v1/summaries"},
-		})
+		}
+		if endpoint := os.Getenv("AGENT_FEEDBACK_ENDPOINT"); endpoint != "" {
+			opts.Endpoint = endpoint
+		}
+		feedback, err := agentfeedback.New(opts)
 		if err != nil {
 			log.Fatal(err)
 		}
