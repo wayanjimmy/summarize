@@ -28,7 +28,7 @@ func NewHandler(svc *summary.Service, version string, fi *FeedbackIntegration) h
 	}
 	registerResources(server, svc)
 
-	handler := mcp.NewStreamableHTTPHandler(
+	mcpHandler := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return server },
 		&mcp.StreamableHTTPOptions{
 			Stateless:                    true,
@@ -36,10 +36,20 @@ func NewHandler(svc *summary.Service, version string, fi *FeedbackIntegration) h
 			PropagateRequestCancellation: true,
 		},
 	)
+	var handler http.Handler = mcpHandler
 	if fi != nil {
-		return validateMCPHeaders(handler)
+		handler = validateMCPHeaders(handler)
 	}
-	return handler
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			// Stateless server: no standalone SSE streams.
+			// Return 406 so clients fall back to POST-only mode.
+			w.Header().Set("Allow", "POST")
+			w.WriteHeader(http.StatusNotAcceptable)
+			return
+		}
+		handler.ServeHTTP(w, r)
+	})
 }
 
 func validateMCPHeaders(next http.Handler) http.Handler {

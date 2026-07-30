@@ -70,9 +70,12 @@ func NewRouter(h *Handlers, mcpHandler http.Handler, diagBackend diag.Backend, r
 		r.Patch("/runs/{run_id}", h.UpdateRun)
 	})
 
-	// MCP endpoint (stateless 2026-07-28, POST only)
+	// MCP endpoint (stateless 2026-07-28 Streamable HTTP).
+	// Register for all methods so the MCP handler itself can return the
+	// spec-compliant 405 with an Allow header for non-POST probes (e.g. GET
+	// for standalone SSE discovery). Chi's own 405 lacks the Allow header.
 	if mcpHandler != nil {
-		r.Method(http.MethodPost, "/mcp", mcpHandler)
+		r.Handle("/mcp", mcpHandler)
 	}
 
 	apiKey := os.Getenv("AGENT_FEEDBACK_KEY")
