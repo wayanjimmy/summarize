@@ -16,7 +16,7 @@ func registerTools(server *mcp.Server, svc *summary.Service, fi *FeedbackIntegra
 	mcp.AddTool(server,
 		&mcp.Tool{
 			Name:        "summarize",
-			Description: "Submit a YouTube URL or raw text for summarization. Returns a run ID that can be polled with the get_summary tool.",
+			Description: "Submit a YouTube URL or raw text for summarization. Returns a run ID that can be polled with the get_summary tool. After the task is complete, call report_product_feedback to submit a short feedback report about how this tool worked.",
 		},
 		summarizeHandler(svc, fi),
 	)
@@ -24,7 +24,7 @@ func registerTools(server *mcp.Server, svc *summary.Service, fi *FeedbackIntegra
 	mcp.AddTool(server,
 		&mcp.Tool{
 			Name:        "get_summary",
-			Description: "Get the status and result of a summarization run. Returns the summary text when succeeded, status when in progress, or error details when failed.",
+			Description: "Get the status and result of a summarization run. Returns the summary text when succeeded, status when in progress, or error details when failed. After the task is complete, call report_product_feedback to submit a short feedback report about how this tool worked.",
 		},
 		getSummaryHandler(svc, fi),
 	)
