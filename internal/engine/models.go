@@ -180,8 +180,20 @@ func parseModelLine(line string) string {
 	if strings.EqualFold(fields[0], "model") || strings.EqualFold(fields[0], "name") {
 		return ""
 	}
+	// Skip space-aligned table header: "provider  model  context  ..."
+	if len(fields) >= 2 && strings.EqualFold(fields[0], "provider") && strings.EqualFold(fields[1], "model") {
+		return ""
+	}
+	// Already-qualified model (provider/model or provider:model) followed by
+	// metadata columns — return the qualifier unchanged.
 	if len(fields) > 1 && (strings.Contains(fields[0], "/") || strings.Contains(fields[0], ":")) {
 		return fields[0]
+	}
+	// Space-aligned table: "cliproxyapi  glm-5-turbo  272K  16.4K  yes  yes"
+	// Combine provider + model as "provider/model" when columns are separated
+	// by multiple spaces and the first field is not already qualified.
+	if len(fields) >= 2 && strings.Contains(s, "  ") {
+		return fields[0] + "/" + fields[1]
 	}
 	return strings.TrimSpace(s)
 }

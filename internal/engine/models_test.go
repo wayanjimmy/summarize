@@ -24,6 +24,33 @@ cpa/tr-qwen3.7-max
 	}
 }
 
+func TestParseModelListPiSpaceAlignedTable(t *testing.T) {
+	out := `provider                        model                      context  max-out  thinking  images
+cliproxyapi                     deepseek-v4-flash          272K     16.4K    yes       yes
+cliproxyapi                     glm-5-turbo                272K     16.4K    yes       yes
+cliproxyapi                     gemini-2.5-flash           272K     16.4K    yes       yes
+`
+	want := []string{
+		"cliproxyapi/deepseek-v4-flash",
+		"cliproxyapi/glm-5-turbo",
+		"cliproxyapi/gemini-2.5-flash",
+	}
+	if got := ParseModelList(out); !reflect.DeepEqual(got, want) {
+		t.Fatalf("ParseModelList() = %#v, want %#v", got, want)
+	}
+}
+
+func TestParseModelListAlreadyQualifiedWithMetadata(t *testing.T) {
+	out := `provider                        model                      context
+openai/gpt-4o                   128K                       16K
+anthropic:claude-4              200K                       16K
+`
+	want := []string{"openai/gpt-4o", "anthropic:claude-4"}
+	if got := ParseModelList(out); !reflect.DeepEqual(got, want) {
+		t.Fatalf("ParseModelList() = %#v, want %#v", got, want)
+	}
+}
+
 func TestModelCatalogCacheAndStaleFallback(t *testing.T) {
 	now := time.Date(2026, 6, 7, 0, 0, 0, 0, time.UTC)
 	lister := &fakeLister{name: "pi", models: []string{"m1"}}

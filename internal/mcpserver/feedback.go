@@ -53,6 +53,8 @@ type telemetryEvent struct {
 	Classification     string `json:"classification"`
 	ConfirmationMethod string `json:"confirmationMethod"`
 	OccurredAt         string `json:"occurredAt"`
+	SessionRef         string `json:"sessionRef,omitempty"`
+	SessionSource      string `json:"sessionSource,omitempty"`
 }
 
 func NewFeedbackIntegration(cfg FeedbackConfig) (*FeedbackIntegration, error) {
@@ -136,10 +138,14 @@ func feedbackReportSchema() agentfeedback.ReportSchema {
 	}
 }
 
-func (fi *FeedbackIntegration) RecordMCP(interactionID, operation string, durationMs int64) {
+func (fi *FeedbackIntegration) RecordMCP(interactionID, operation string, durationMs int64, sessionRef string) {
 	event := telemetryEvent{InteractionID: interactionID, Surface: "mcp", Operation: operation,
 		DurationMS: durationMs, Classification: "confirmed", ConfirmationMethod: "mcp",
 		OccurredAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	if sessionRef != "" {
+		event.SessionRef = sessionRef
+		event.SessionSource = "mcp"
+	}
 	select {
 	case fi.telemetry <- event:
 	default:
