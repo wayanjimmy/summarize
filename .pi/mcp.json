@@ -7,6 +7,10 @@
         "PGR_OUTPUT_PROFILE": "full_v4"
       },
       "directTools": true
+    },
+    "summarize": {
+      "url": "http://127.0.0.1:8420/mcp",
+      "directTools": true
     }
   }
 }
