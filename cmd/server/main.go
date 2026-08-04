@@ -168,6 +168,7 @@ func main() {
 	if cfg.AgentFeedbackKey != "" {
 		feedbackIntegration, err = mcpserver.NewFeedbackIntegration(mcpserver.FeedbackConfig{
 			APIKey: cfg.AgentFeedbackKey, Endpoint: cfg.AgentFeedbackEndpoint,
+			RuntimeHint: cfg.AgentFeedbackRuntimeHint,
 		})
 		if err != nil {
 			log.Fatalf("Failed to initialize MCP Agent Feedback: %v", err)
@@ -184,8 +185,9 @@ func main() {
 		rawMCP := mcpserver.NewHandler(summaryService, version, feedbackIntegration)
 		// Wrap with auth middleware
 		authCfg := mcpauth.Config{
-			Mode:   cfg.MCPAuthMode,
-			APIKey: cfg.MCPAPIKey,
+			Mode:         cfg.MCPAuthMode,
+			APIKey:       cfg.MCPAPIKey,
+			AnonymousRef: cfg.MCPAnonymousRef,
 			OAuth: mcpauth.OAuthConfig{
 				Issuer:   cfg.MCPOAuthISS,
 				JWKSURL:  cfg.MCPOAuthJWKS,

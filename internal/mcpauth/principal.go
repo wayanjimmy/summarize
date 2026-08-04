@@ -24,10 +24,13 @@ const DefaultOwnerID = "local"
 
 // Principal represents the authenticated caller. ID is the stable owner
 // identifier persisted on runs; Tenant is an optional realm/issuer for
-// multi-tenant deployments.
+// multi-tenant deployments. Anonymous is true when the caller is
+// unauthenticated (none mode); in that case ID is a deployment-stable
+// first-party identifier used as anonymousRef for telemetry.
 type Principal struct {
-	ID     string
-	Tenant string
+	ID        string
+	Tenant    string
+	Anonymous bool
 }
 
 type contextKey struct{}

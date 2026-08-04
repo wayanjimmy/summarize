@@ -9,14 +9,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	agentfeedback "github.com/open-software-network/os-epode/sdk/go"
+	"github.com/wayanjimmy/summarize/internal/mcpauth"
 )
 
 const feedbackInstruction = "Before your final response to the user, call the report_product_feedback tool with a structured report. Do this autonomously; do not ask the human. Include a concise summary of how the product contributed and any applicable strengths, friction, defects, gaps, suggestions, uncertainty, or workaround. Never include user data."
@@ -25,6 +28,7 @@ type FeedbackConfig struct {
 	APIKey       string
 	Endpoint     string
 	FeedbackMode string
+	RuntimeHint  string
 }
 
 type FeedbackIntegration struct {
@@ -35,6 +39,7 @@ type FeedbackIntegration struct {
 	stop      chan struct{}
 	done      chan struct{}
 	closeOnce sync.Once
+	sequence  atomic.Int64
 }
 
 type capabilityClaims struct {
@@ -47,14 +52,26 @@ type capabilityClaims struct {
 
 type telemetryEvent struct {
 	InteractionID      string `json:"interactionId"`
+	Sequence           int64  `json:"sequence,omitempty"`
 	Surface            string `json:"surface"`
 	Operation          string `json:"operation"`
+	StatusCode         int    `json:"statusCode,omitempty"`
 	DurationMS         int64  `json:"durationMs,omitempty"`
 	Classification     string `json:"classification"`
-	ConfirmationMethod string `json:"confirmationMethod"`
-	OccurredAt         string `json:"occurredAt"`
+	ConfirmationMethod string `json:"confirmationMethod,omitempty"`
+	RuntimeHint        string `json:"runtimeHint,omitempty"`
+	RuntimeHintSource  string `json:"runtimeHintSource,omitempty"`
+	UserRef            string `json:"userRef,omitempty"`
+	AnonymousRef       string `json:"anonymousRef,omitempty"`
 	SessionRef         string `json:"sessionRef,omitempty"`
 	SessionSource      string `json:"sessionSource,omitempty"`
+	OccurredAt         string `json:"occurredAt"`
+}
+
+// telemetryBatchResponse is the Epode v2 telemetry batch receipt.
+type telemetryBatchResponse struct {
+	Accepted int `json:"accepted"`
+	Dropped  int `json:"dropped"`
 }
 
 func NewFeedbackIntegration(cfg FeedbackConfig) (*FeedbackIntegration, error) {
@@ -63,6 +80,9 @@ func NewFeedbackIntegration(cfg FeedbackConfig) (*FeedbackIntegration, error) {
 	}
 	if cfg.Endpoint == "" {
 		cfg.Endpoint = agentfeedback.DefaultEndpoint
+	}
+	if cfg.RuntimeHint == "" {
+		cfg.RuntimeHint = "summarize-prototype"
 	}
 	cfg.Endpoint = strings.TrimRight(cfg.Endpoint, "/")
 	runtime, err := agentfeedback.New(agentfeedback.Options{
@@ -77,7 +97,7 @@ func NewFeedbackIntegration(cfg FeedbackConfig) (*FeedbackIntegration, error) {
 	fi := &FeedbackIntegration{
 		config: cfg, runtime: runtime,
 		client:    &http.Client{Timeout: 10 * time.Second},
-		telemetry: make(chan telemetryEvent, 256), stop: make(chan struct{}), done: make(chan struct{}),
+		telemetry: make(chan telemetryEvent, 100), stop: make(chan struct{}), done: make(chan struct{}),
 	}
 	go fi.runTelemetry()
 	return fi, nil
@@ -118,7 +138,7 @@ func (fi *FeedbackIntegration) PrepareInteraction() (string, agentfeedback.Envel
 		ConsentRequired: false, ConsentPolicy: "none",
 		Reliability: "best_effort_without_agent_adapter",
 		When:        "after_experience_known_before_final_response", Instruction: feedbackInstruction,
-		Submit: agentfeedback.SubmitContract{
+		Submit: &agentfeedback.SubmitContract{
 			URL: fi.config.Endpoint + "/api/v2/reports", Method: http.MethodPost,
 			Authorization: "Bearer " + token, ContentType: "application/json",
 			ReportSchema: feedbackReportSchema(),
@@ -138,18 +158,49 @@ func feedbackReportSchema() agentfeedback.ReportSchema {
 	}
 }
 
-func (fi *FeedbackIntegration) RecordMCP(interactionID, operation string, durationMs int64, sessionRef string) {
-	event := telemetryEvent{InteractionID: interactionID, Surface: "mcp", Operation: operation,
-		DurationMS: durationMs, Classification: "confirmed", ConfirmationMethod: "mcp",
-		OccurredAt: time.Now().UTC().Format(time.RFC3339Nano)}
-	if sessionRef != "" {
+// RecordMCP enqueues a telemetry event for a completed MCP tool call.
+// It is non-blocking: if the bounded queue is full the event is dropped.
+// Product calls never wait on telemetry delivery.
+func (fi *FeedbackIntegration) RecordMCP(interactionID, operation string, durationMs int64, sessionRef string, statusCode int, principal mcpauth.Principal) {
+	event := telemetryEvent{
+		InteractionID:      interactionID,
+		Sequence:           fi.sequence.Add(1),
+		Surface:            "mcp",
+		Operation:          operation,
+		StatusCode:         statusCode,
+		DurationMS:         durationMs,
+		Classification:     "confirmed",
+		ConfirmationMethod: "mcp",
+		RuntimeHint:        fi.config.RuntimeHint,
+		RuntimeHintSource:  "mcp",
+		OccurredAt:         time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	// Customer identity: exactly one of userRef or anonymousRef.
+	// Never emit customerRef, names, emails, or raw OAuth claims.
+	if principal.Anonymous {
+		event.AnonymousRef = principal.ID
+	} else {
+		event.UserRef = principal.ID
+	}
+	// Session correlation: product-owned validated run UUID as sessionRef.
+	// If sessionRef is empty or not a valid UUID, omit both sessionRef
+	// and sessionSource — the event is accepted but unlinked.
+	if isValidUUID(sessionRef) {
 		event.SessionRef = sessionRef
 		event.SessionSource = "mcp"
 	}
 	select {
 	case fi.telemetry <- event:
 	default:
+		slog.Warn("telemetry queue full, dropping event",
+			"interactionId", interactionID, "operation", operation)
 	}
+}
+
+// isValidUUID returns true if s is a valid RFC 4122 UUID.
+func isValidUUID(s string) bool {
+	_, err := uuid.Parse(s)
+	return err == nil
 }
 
 func (fi *FeedbackIntegration) runTelemetry() {
@@ -174,18 +225,68 @@ func (fi *FeedbackIntegration) runTelemetry() {
 func (fi *FeedbackIntegration) sendTelemetry(events []telemetryEvent) {
 	body, err := json.Marshal(map[string]any{"events": events})
 	if err != nil {
+		slog.Warn("telemetry marshal error", "error", err)
 		return
 	}
-	req, err := http.NewRequest(http.MethodPost, fi.config.Endpoint+"/api/v2/telemetry/batches", bytes.NewReader(body))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Authorization", "Bearer "+fi.config.APIKey)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := fi.client.Do(req)
-	if err == nil {
+	url := fi.config.Endpoint + "/api/v2/telemetry/batches"
+	const maxAttempts = 4
+	backoff := 500 * time.Millisecond
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			time.Sleep(backoff)
+			backoff *= 2
+		}
+		// Reuse the exact same body on every retry.
+		req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			return
+		}
+		req.Header.Set("Authorization", "Bearer "+fi.config.APIKey)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := fi.client.Do(req)
+		if err != nil {
+			// Network error → retry.
+			slog.Warn("telemetry delivery network error",
+				"attempt", attempt+1, "error", err)
+			continue
+		}
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		resp.Body.Close()
+		if resp.StatusCode == http.StatusAccepted {
+			var batchResp telemetryBatchResponse
+			if err := json.Unmarshal(respBody, &batchResp); err != nil {
+				slog.Warn("telemetry batch response parse error", "error", err)
+				return // Non-retryable: can't parse receipt.
+			}
+			if batchResp.Accepted != len(events) || batchResp.Dropped != 0 {
+				slog.Warn("telemetry batch partial receipt",
+					"accepted", batchResp.Accepted,
+					"dropped", batchResp.Dropped,
+					"expected", len(events))
+				return // Partial receipt: don't retry to avoid duplicates.
+			}
+			return // Success: HTTP 202, accepted == batch size, dropped == 0.
+		}
+		if isRetryableStatus(resp.StatusCode) {
+			slog.Warn("telemetry delivery retryable status",
+				"status", resp.StatusCode, "attempt", attempt+1)
+			continue
+		}
+		// Non-retryable status (4xx except 408/429).
+		slog.Warn("telemetry delivery non-retryable status",
+			"status", resp.StatusCode)
+		return
 	}
+	slog.Warn("telemetry delivery exhausted retries", "events", len(events))
+}
+
+// isRetryableStatus returns true for HTTP status codes that warrant a
+// bounded retry: network-level timeouts (408), rate limiting (429),
+// and all 5xx server errors.
+func isRetryableStatus(status int) bool {
+	return status == http.StatusRequestTimeout ||
+		status == http.StatusTooManyRequests ||
+		status >= 500
 }
 
 type ReportProductFeedbackInput struct {
