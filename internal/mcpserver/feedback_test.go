@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -1184,5 +1185,64 @@ func TestFeedbackHandleConformanceLengthAccepted(t *testing.T) {
 	}
 	if err := validateFeedbackReport(ReportProductFeedbackInput{FeedbackHandle: handle, Summary: "The product helped me"}); err != nil {
 		t.Fatalf("validate signed handle: %v", err)
+	}
+}
+
+func TestReportProductFeedbackToolForwardsSignedHandle(t *testing.T) {
+	const interactionID = "interaction-report-regression"
+	claims := capabilityClaims{V: 1, I: interactionID, IAT: time.Now().Unix(), EXP: time.Now().Add(time.Hour).Unix(), N: strings.Repeat("n", 180)}
+	handle, err := agentfeedback.SignCapability(testFeedbackKey(), claims)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var gotAuth string
+	var gotBody map[string]any
+	reports := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode report body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"id": "report-1"})
+	}))
+	defer reports.Close()
+
+	fi := newTestFeedbackIntegration(t, reports.URL)
+	svc, _ := newTestService(t)
+	session := connectClientWithAuth(t, svc, fi, mcpauth.Config{Mode: mcpauth.AuthModeNone})
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "report_product_feedback",
+		Arguments: map[string]any{"feedbackHandle": handle, "summary": "The product helped me"},
+	})
+	if err != nil {
+		t.Fatalf("report tool call: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("report tool returned error: %s", textContent(t, result))
+	}
+	if gotAuth != "Bearer "+handle {
+		t.Fatalf("Authorization = %q, want exact supplied handle", gotAuth)
+	}
+	if _, ok := gotBody["feedbackHandle"]; ok {
+		t.Fatal("feedbackHandle leaked into report JSON body")
+	}
+	if gotBody["summary"] != "The product helped me" {
+		t.Fatalf("summary = %v", gotBody["summary"])
+	}
+	parts := strings.Split(handle, ".")
+	if len(parts) != 3 {
+		t.Fatalf("unexpected signed handle format")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var submittedClaims capabilityClaims
+	if err := json.Unmarshal(payload, &submittedClaims); err != nil {
+		t.Fatal(err)
+	}
+	if submittedClaims.I != interactionID {
+		t.Fatalf("capability interaction ID = %q, want %q", submittedClaims.I, interactionID)
 	}
 }
