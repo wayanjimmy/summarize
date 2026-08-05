@@ -10,9 +10,10 @@ import (
 
 // Config holds auth middleware configuration.
 type Config struct {
-	Mode   string      // none, static, oauth
-	APIKey string      // for static mode (MCP_API_KEY)
-	OAuth  OAuthConfig // for oauth mode
+	Mode         string      // none, static, oauth
+	APIKey       string      // for static mode (MCP_API_KEY)
+	AnonymousRef string      // for none mode: deployment-stable first-party ID (MCP_ANONYMOUS_REF)
+	OAuth        OAuthConfig // for oauth mode
 }
 
 // Middleware returns HTTP middleware that authenticates the request according
@@ -52,7 +53,11 @@ func Middleware(cfg Config) func(http.Handler) http.Handler {
 func authenticate(r *http.Request, cfg Config, validator *jwtValidator) (Principal, error) {
 	switch cfg.Mode {
 	case AuthModeNone, "":
-		return Principal{ID: DefaultOwnerID}, nil
+		id := cfg.AnonymousRef
+		if id == "" {
+			id = DefaultOwnerID
+		}
+		return Principal{ID: id, Anonymous: true}, nil
 
 	case AuthModeStatic:
 		if cfg.APIKey == "" {

@@ -168,6 +168,7 @@ func main() {
 	if cfg.AgentFeedbackKey != "" {
 		feedbackIntegration, err = mcpserver.NewFeedbackIntegration(mcpserver.FeedbackConfig{
 			APIKey: cfg.AgentFeedbackKey, Endpoint: cfg.AgentFeedbackEndpoint,
+			RuntimeHint: cfg.AgentFeedbackRuntimeHint,
 		})
 		if err != nil {
 			log.Fatalf("Failed to initialize MCP Agent Feedback: %v", err)
@@ -184,8 +185,9 @@ func main() {
 		rawMCP := mcpserver.NewHandler(summaryService, version, feedbackIntegration)
 		// Wrap with auth middleware
 		authCfg := mcpauth.Config{
-			Mode:   cfg.MCPAuthMode,
-			APIKey: cfg.MCPAPIKey,
+			Mode:         cfg.MCPAuthMode,
+			APIKey:       cfg.MCPAPIKey,
+			AnonymousRef: cfg.MCPAnonymousRef,
 			OAuth: mcpauth.OAuthConfig{
 				Issuer:   cfg.MCPOAuthISS,
 				JWKSURL:  cfg.MCPOAuthJWKS,
@@ -201,7 +203,14 @@ func main() {
 	// Create router
 	diagBackend, _ := any(wfBackend).(diag.Backend)
 	restrictDiag := cfg.MCPAuthMode != "" && cfg.MCPAuthMode != "none"
-	router := httpapi.NewRouter(handlers, mcpHandler, diagBackend, restrictDiag)
+	router, shutdownRESTFeedback := httpapi.NewRouterWithShutdown(handlers, mcpHandler, diagBackend, restrictDiag, httpapi.AgentFeedbackConfig{APIKey: cfg.AgentFeedbackKey, Endpoint: cfg.AgentFeedbackEndpoint, RuntimeHint: cfg.AgentFeedbackRuntimeHint, AnonymousRef: cfg.SummarizeInstallationRef})
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := shutdownRESTFeedback(shutdownCtx); err != nil {
+			slog.Error("REST Agent Feedback shutdown error", "error", err)
+		}
+	}()
 
 	// Start HTTP server
 	srv := &http.Server{

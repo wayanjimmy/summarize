@@ -10,7 +10,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/nats-io/nats-server/v2 v2.14.2
 	github.com/nats-io/nats.go v1.52.0
-	github.com/open-software-network/os-epode/sdk/go v0.0.0-20260730073537-d69d712a84ce
+	github.com/open-software-network/os-epode/sdk/go v0.0.0-20260805055207-01bb0813bc71
 	modernc.org/sqlite v1.51.0
 )
 

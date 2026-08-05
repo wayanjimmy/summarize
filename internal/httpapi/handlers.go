@@ -201,6 +201,7 @@ func (h *Handlers) CancelRun(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
+	setAgentFeedbackSession(r, task.ID)
 
 	writeJSON(w, http.StatusOK, TaskResponse{
 		RunID:   task.ID,
@@ -233,6 +234,7 @@ func (h *Handlers) UpdateRun(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
+	setAgentFeedbackSession(r, task.ID)
 
 	writeJSON(w, http.StatusOK, TaskResponse{
 		RunID:  task.ID,

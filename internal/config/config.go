@@ -46,15 +46,18 @@ type Config struct {
 	CacheTTL time.Duration
 
 	// MCP auth
-	MCPAuthMode  string // none, static, oauth
-	MCPAPIKey    string // for static mode
-	MCPOAuthISS  string // expected issuer for oauth mode
-	MCPOAuthJWKS string // JWKS URL for oauth mode
-	MCPOAuthAud  string // expected audience for oauth mode (optional)
-	MCPEnable    bool   // whether MCP endpoint is mounted
+	MCPAuthMode     string // none, static, oauth
+	MCPAPIKey       string // for static mode
+	MCPOAuthISS     string // expected issuer for oauth mode
+	MCPOAuthJWKS    string // JWKS URL for oauth mode
+	MCPOAuthAud     string // expected audience for oauth mode (optional)
+	MCPAnonymousRef string // deployment-stable first-party ID for none mode
+	MCPEnable       bool   // whether MCP endpoint is mounted
 
-	AgentFeedbackKey      string
-	AgentFeedbackEndpoint string
+	AgentFeedbackKey         string
+	AgentFeedbackEndpoint    string
+	AgentFeedbackRuntimeHint string
+	SummarizeInstallationRef string
 }
 
 // DefaultPrompt is the built-in fallback summarization instruction.
@@ -124,35 +127,42 @@ func Load() (*Config, error) {
 	mcpOAuthISS := os.Getenv("MCP_OAUTH_ISSUER")
 	mcpOAuthJWKS := os.Getenv("MCP_OAUTH_JWKS_URL")
 	mcpOAuthAud := os.Getenv("MCP_OAUTH_AUDIENCE")
+	installationRef := os.Getenv("SUMMARIZE_INSTALLATION_REF")
+	if installationRef == "" {
+		installationRef = os.Getenv("MCP_ANONYMOUS_REF")
+	}
 	mcpEnable := os.Getenv("MCP_ENABLE") != "0" // enabled by default
 
 	cfg := &Config{
-		Port:                  port,
-		DataDir:               dataDir,
-		LogLevel:              logLevel,
-		DefaultEngine:         defaultEngine,
-		DefaultPrompt:         defaultPrompt,
-		PiBin:                 piBin,
-		AgyBin:                agyBin,
-		PiModel:               piModel,
-		AgyModel:              agyModel,
-		RunTimeout:            runTimeout,
-		MaxInputChars:         maxInputChars,
-		YtdlpBin:              ytdlpBin,
-		TranscriptLangs:       transcriptLangs,
-		YtdlpTimeout:          ytdlpTimeout,
-		NATSHost:              natsHost,
-		NATSPort:              natsPort,
-		NATSSubject:           natsSubject,
-		CacheTTL:              cacheTTL,
-		MCPAuthMode:           mcpAuthMode,
-		MCPAPIKey:             mcpAPIKey,
-		MCPOAuthISS:           mcpOAuthISS,
-		MCPOAuthJWKS:          mcpOAuthJWKS,
-		MCPOAuthAud:           mcpOAuthAud,
-		MCPEnable:             mcpEnable,
-		AgentFeedbackKey:      os.Getenv("AGENT_FEEDBACK_KEY"),
-		AgentFeedbackEndpoint: os.Getenv("AGENT_FEEDBACK_ENDPOINT"),
+		Port:                     port,
+		DataDir:                  dataDir,
+		LogLevel:                 logLevel,
+		DefaultEngine:            defaultEngine,
+		DefaultPrompt:            defaultPrompt,
+		PiBin:                    piBin,
+		AgyBin:                   agyBin,
+		PiModel:                  piModel,
+		AgyModel:                 agyModel,
+		RunTimeout:               runTimeout,
+		MaxInputChars:            maxInputChars,
+		YtdlpBin:                 ytdlpBin,
+		TranscriptLangs:          transcriptLangs,
+		YtdlpTimeout:             ytdlpTimeout,
+		NATSHost:                 natsHost,
+		NATSPort:                 natsPort,
+		NATSSubject:              natsSubject,
+		CacheTTL:                 cacheTTL,
+		MCPAuthMode:              mcpAuthMode,
+		MCPAPIKey:                mcpAPIKey,
+		MCPOAuthISS:              mcpOAuthISS,
+		MCPOAuthJWKS:             mcpOAuthJWKS,
+		MCPOAuthAud:              mcpOAuthAud,
+		MCPAnonymousRef:          installationRef,
+		MCPEnable:                mcpEnable,
+		AgentFeedbackKey:         os.Getenv("AGENT_FEEDBACK_KEY"),
+		AgentFeedbackEndpoint:    os.Getenv("AGENT_FEEDBACK_ENDPOINT"),
+		AgentFeedbackRuntimeHint: os.Getenv("AGENT_FEEDBACK_RUNTIME_HINT"),
+		SummarizeInstallationRef: installationRef,
 	}
 
 	if err := cfg.Validate(); err != nil {
