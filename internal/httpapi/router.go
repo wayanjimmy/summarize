@@ -42,7 +42,9 @@ func agentFeedbackSessionRef(r *http.Request) string {
 // If mcpHandler is non-nil, it is mounted at POST /mcp outside the Agent
 // Feedback middleware surface. If restrictDiag is true, the /diag endpoint
 // is not mounted (for production deployments with auth enabled).
-func NewRouter(h *Handlers, mcpHandler http.Handler, diagBackend diag.Backend, restrictDiag bool) http.Handler {
+type AgentFeedbackConfig struct{ APIKey, Endpoint, RuntimeHint, AnonymousRef string }
+
+func NewRouter(h *Handlers, mcpHandler http.Handler, diagBackend diag.Backend, restrictDiag bool, feedbackCfg ...AgentFeedbackConfig) http.Handler {
 	r := chi.NewRouter()
 
 	// Middleware
@@ -78,14 +80,24 @@ func NewRouter(h *Handlers, mcpHandler http.Handler, diagBackend diag.Backend, r
 		r.Handle("/mcp", mcpHandler)
 	}
 
-	apiKey := os.Getenv("AGENT_FEEDBACK_KEY")
+	var af AgentFeedbackConfig
+	if len(feedbackCfg) > 0 {
+		af = feedbackCfg[0]
+	} else {
+		af.APIKey = os.Getenv("AGENT_FEEDBACK_KEY")
+		af.Endpoint = os.Getenv("AGENT_FEEDBACK_ENDPOINT")
+	}
+	apiKey := af.APIKey
 	if apiKey != "" {
 		opts := agentfeedback.Options{
-			APIKey:     apiKey,
-			Include:    []string{"/v1/summaries", "/v1/summaries/**", "/v1/runs/**"},
-			SessionRef: agentFeedbackSessionRef,
+			APIKey:       apiKey,
+			Include:      []string{"/v1/summaries", "/v1/summaries/**", "/v1/runs/**"},
+			SessionRef:   agentFeedbackSessionRef,
+			AnonymousRef: func(_ *http.Request) string { return af.AnonymousRef },
+			RuntimeHint:  func(_ *http.Request) string { return af.RuntimeHint },
+			CacheMode:    agentfeedback.CachePrivate,
 		}
-		if endpoint := os.Getenv("AGENT_FEEDBACK_ENDPOINT"); endpoint != "" {
+		if endpoint := af.Endpoint; endpoint != "" {
 			opts.Endpoint = endpoint
 		}
 		feedback, err := agentfeedback.New(opts)

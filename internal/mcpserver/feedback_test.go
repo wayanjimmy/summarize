@@ -650,7 +650,7 @@ func TestEpode_InvalidSessionRefUnlinked(t *testing.T) {
 	fi := newTestFeedbackIntegration(t, ts.URL)
 
 	// Record with a non-UUID sessionRef — must be unlinked.
-	fi.RecordMCP(uuid.NewString(), "summarize", 10, "not-a-uuid", 200,
+	fi.RecordMCP(uuid.NewString(), "summarize", 10, "not valid session", 200,
 		mcpauth.Principal{ID: "local", Anonymous: true})
 
 	tc.waitFor(t, 1, 5*time.Second)
@@ -1146,8 +1146,8 @@ func TestEpode_NoSensitiveDataInTelemetry(t *testing.T) {
 			t.Errorf("telemetry is missing safe field %q: %s", safe, serialized)
 		}
 	}
-	if event.RuntimeHint != "summarize-prototype" || event.RuntimeHintSource != "mcp" {
-		t.Errorf("runtime hint = %q/%q, want summarize-prototype/mcp", event.RuntimeHint, event.RuntimeHintSource)
+	if event.RuntimeHint != "summarize/latest" || event.RuntimeHintSource != "mcp" {
+		t.Errorf("runtime hint = %q/%q, want summarize/latest/mcp", event.RuntimeHint, event.RuntimeHintSource)
 	}
 }
 
@@ -1161,8 +1161,8 @@ func TestEpode_RuntimeHintPresent(t *testing.T) {
 		mcpauth.Principal{ID: "local", Anonymous: true})
 	tc.waitFor(t, 1, 5*time.Second)
 	event := tc.snapshot()[0]
-	if event.RuntimeHint != "summarize-prototype" {
-		t.Errorf("RuntimeHint = %q, want summarize-prototype", event.RuntimeHint)
+	if event.RuntimeHint != "summarize/latest" {
+		t.Errorf("RuntimeHint = %q, want summarize/latest", event.RuntimeHint)
 	}
 	if event.RuntimeHintSource != "mcp" {
 		t.Errorf("RuntimeHintSource = %q, want mcp", event.RuntimeHintSource)

@@ -57,6 +57,7 @@ type Config struct {
 	AgentFeedbackKey         string
 	AgentFeedbackEndpoint    string
 	AgentFeedbackRuntimeHint string
+	SummarizeInstallationRef string
 }
 
 // DefaultPrompt is the built-in fallback summarization instruction.
@@ -126,7 +127,10 @@ func Load() (*Config, error) {
 	mcpOAuthISS := os.Getenv("MCP_OAUTH_ISSUER")
 	mcpOAuthJWKS := os.Getenv("MCP_OAUTH_JWKS_URL")
 	mcpOAuthAud := os.Getenv("MCP_OAUTH_AUDIENCE")
-	mcpAnonymousRef := os.Getenv("MCP_ANONYMOUS_REF")
+	installationRef := os.Getenv("SUMMARIZE_INSTALLATION_REF")
+	if installationRef == "" {
+		installationRef = os.Getenv("MCP_ANONYMOUS_REF")
+	}
 	mcpEnable := os.Getenv("MCP_ENABLE") != "0" // enabled by default
 
 	cfg := &Config{
@@ -153,11 +157,12 @@ func Load() (*Config, error) {
 		MCPOAuthISS:              mcpOAuthISS,
 		MCPOAuthJWKS:             mcpOAuthJWKS,
 		MCPOAuthAud:              mcpOAuthAud,
-		MCPAnonymousRef:          mcpAnonymousRef,
+		MCPAnonymousRef:          installationRef,
 		MCPEnable:                mcpEnable,
 		AgentFeedbackKey:         os.Getenv("AGENT_FEEDBACK_KEY"),
 		AgentFeedbackEndpoint:    os.Getenv("AGENT_FEEDBACK_ENDPOINT"),
 		AgentFeedbackRuntimeHint: os.Getenv("AGENT_FEEDBACK_RUNTIME_HINT"),
+		SummarizeInstallationRef: installationRef,
 	}
 
 	if err := cfg.Validate(); err != nil {

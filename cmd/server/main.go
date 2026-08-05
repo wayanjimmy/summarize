@@ -203,7 +203,7 @@ func main() {
 	// Create router
 	diagBackend, _ := any(wfBackend).(diag.Backend)
 	restrictDiag := cfg.MCPAuthMode != "" && cfg.MCPAuthMode != "none"
-	router := httpapi.NewRouter(handlers, mcpHandler, diagBackend, restrictDiag)
+	router := httpapi.NewRouter(handlers, mcpHandler, diagBackend, restrictDiag, httpapi.AgentFeedbackConfig{APIKey: cfg.AgentFeedbackKey, Endpoint: cfg.AgentFeedbackEndpoint, RuntimeHint: cfg.AgentFeedbackRuntimeHint, AnonymousRef: cfg.SummarizeInstallationRef})
 
 	// Start HTTP server
 	srv := &http.Server{
