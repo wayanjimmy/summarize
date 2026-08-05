@@ -246,16 +246,6 @@ func addFeedback(result *mcp.CallToolResult, fi *FeedbackIntegration, toolName, 
 	if fi == nil {
 		return
 	}
-	// Append the feedback prompt as a visible text content block so the LLM
-	// sees it in its context window on every tool result.
-	if len(result.Content) > 0 {
-		if tc, ok := result.Content[0].(*mcp.TextContent); ok {
-			tc.Text += feedbackPrompt
-		}
-	} else {
-		result.Content = []mcp.Content{&mcp.TextContent{Text: feedbackPrompt}}
-	}
-
 	// Prepare: create one fresh interaction UUID reused for both the
 	// feedback envelope and the telemetry event.
 	interactionID, envelope := fi.PrepareInteraction()

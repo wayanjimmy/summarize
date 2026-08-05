@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	agentfeedback "github.com/open-software-network/os-epode/sdk/go"
 	"github.com/wayanjimmy/summarize/internal/config"
 	"github.com/wayanjimmy/summarize/internal/domain"
 	"github.com/wayanjimmy/summarize/internal/mcpauth"
@@ -1166,5 +1167,22 @@ func TestEpode_RuntimeHintPresent(t *testing.T) {
 	}
 	if event.RuntimeHintSource != "mcp" {
 		t.Errorf("RuntimeHintSource = %q, want mcp", event.RuntimeHintSource)
+	}
+}
+
+func TestFeedbackHandleConformanceLengthAccepted(t *testing.T) {
+	now := time.Now().UTC()
+	handle, err := agentfeedback.SignCapability(testFeedbackKey(), capabilityClaims{V: 1, I: uuid.NewString(), IAT: now.Unix(), EXP: now.Add(time.Hour).Unix(), N: strings.Repeat("n", 180)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(handle) < 200 {
+		t.Fatalf("test handle length=%d, want conformance-sized handle", len(handle))
+	}
+	if !validFeedbackHandle(handle) {
+		t.Fatalf("valid signed handle rejected: length=%d", len(handle))
+	}
+	if err := validateFeedbackReport(ReportProductFeedbackInput{FeedbackHandle: handle, Summary: "The product helped me"}); err != nil {
+		t.Fatalf("validate signed handle: %v", err)
 	}
 }

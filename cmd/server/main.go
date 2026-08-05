@@ -203,7 +203,14 @@ func main() {
 	// Create router
 	diagBackend, _ := any(wfBackend).(diag.Backend)
 	restrictDiag := cfg.MCPAuthMode != "" && cfg.MCPAuthMode != "none"
-	router := httpapi.NewRouter(handlers, mcpHandler, diagBackend, restrictDiag, httpapi.AgentFeedbackConfig{APIKey: cfg.AgentFeedbackKey, Endpoint: cfg.AgentFeedbackEndpoint, RuntimeHint: cfg.AgentFeedbackRuntimeHint, AnonymousRef: cfg.SummarizeInstallationRef})
+	router, shutdownRESTFeedback := httpapi.NewRouterWithShutdown(handlers, mcpHandler, diagBackend, restrictDiag, httpapi.AgentFeedbackConfig{APIKey: cfg.AgentFeedbackKey, Endpoint: cfg.AgentFeedbackEndpoint, RuntimeHint: cfg.AgentFeedbackRuntimeHint, AnonymousRef: cfg.SummarizeInstallationRef})
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := shutdownRESTFeedback(shutdownCtx); err != nil {
+			slog.Error("REST Agent Feedback shutdown error", "error", err)
+		}
+	}()
 
 	// Start HTTP server
 	srv := &http.Server{

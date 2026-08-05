@@ -166,30 +166,31 @@ func feedbackReportSchema() agentfeedback.ReportSchema {
 // It is non-blocking: if the bounded queue is full the event is dropped.
 // Product calls never wait on telemetry delivery.
 func (fi *FeedbackIntegration) RecordMCP(interactionID, operation string, durationMs int64, sessionRef string, statusCode int, principal mcpauth.Principal) {
+	if !validOperation(operation) {
+		return
+	}
+	runtimeHint := strings.TrimSpace(fi.config.RuntimeHint)
+	if utf8.RuneCountInString(runtimeHint) > 200 {
+		runtimeHint = ""
+	}
 	event := telemetryEvent{
-		InteractionID:      interactionID,
-		Sequence:           fi.sequence.Add(1),
-		Surface:            "mcp",
-		Operation:          operation,
-		StatusCode:         statusCode,
-		DurationMS:         durationMs,
-		Classification:     "confirmed",
-		ConfirmationMethod: "mcp",
-		RuntimeHint:        fi.config.RuntimeHint,
-		RuntimeHintSource:  "mcp",
-		OccurredAt:         time.Now().UTC().Format(time.RFC3339Nano),
+		InteractionID: interactionID, Sequence: fi.sequence.Add(1), Surface: "mcp", Operation: operation,
+		StatusCode: statusCode, DurationMS: durationMs, Classification: "confirmed", ConfirmationMethod: "mcp",
+		RuntimeHint: runtimeHint, OccurredAt: time.Now().UTC().Format(time.RFC3339Nano),
 	}
-	// Customer identity: exactly one of userRef or anonymousRef.
-	// Never emit customerRef, names, emails, or raw OAuth claims.
-	if principal.Anonymous {
-		event.AnonymousRef = principal.ID
-	} else {
-		event.UserRef = principal.ID
+	if runtimeHint != "" {
+		event.RuntimeHintSource = "mcp"
 	}
-	// Session correlation accepts opaque product-owned references.
-	if validOpaqueRef(sessionRef) {
-		event.SessionRef = sessionRef
-		event.SessionSource = "mcp"
+	identity := strings.TrimSpace(principal.ID)
+	if validOpaqueRef(identity) {
+		if principal.Anonymous {
+			event.AnonymousRef = identity
+		} else {
+			event.UserRef = identity
+		}
+	}
+	if ref := strings.TrimSpace(sessionRef); validOpaqueRef(ref) {
+		event.SessionRef, event.SessionSource = ref, "mcp"
 	}
 	select {
 	case fi.telemetry <- event:
@@ -199,6 +200,18 @@ func (fi *FeedbackIntegration) RecordMCP(interactionID, operation string, durati
 	}
 }
 
+func validFeedbackHandle(s string) bool {
+	if !strings.HasPrefix(s, "afr2_") || len(s) > 1024 {
+		return false
+	}
+	for _, r := range s {
+		if !(r == '_' || r == '-' || r == '.' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
 func validOpaqueRef(s string) bool {
 	s = strings.TrimSpace(s)
 	if len(s) == 0 || len(s) > 160 {
@@ -206,6 +219,18 @@ func validOpaqueRef(s string) bool {
 	}
 	for _, r := range s {
 		if !(r == '.' || r == ':' || r == '-' || r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func validOperation(s string) bool {
+	if len(s) == 0 || len(s) > 160 || strings.Contains(s, "://") {
+		return false
+	}
+	for _, r := range s {
+		if !(r == '/' || r == ':' || r == '.' || r == '*' || r == '{' || r == '}' || r == '-' || r == '_' || r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9') {
 			return false
 		}
 	}
@@ -313,7 +338,7 @@ type ReportProductFeedbackOutput struct {
 }
 
 func registerFeedbackTool(server *mcp.Server, fi *FeedbackIntegration) {
-	mcp.AddTool(server, &mcp.Tool{Name: "report_product_feedback", Description: "Submit structured feedback about the summarize product before the final response."},
+	mcp.AddTool(server, &mcp.Tool{Name: "report_product_feedback", Description: "Submit structured feedback about the summarize product before the final response.", Annotations: &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: new(bool), IdempotentHint: true}},
 		func(ctx context.Context, _ *mcp.CallToolRequest, input ReportProductFeedbackInput) (*mcp.CallToolResult, ReportProductFeedbackOutput, error) {
 			if err := validateFeedbackReport(input); err != nil {
 				return nil, ReportProductFeedbackOutput{}, err
@@ -342,7 +367,7 @@ func registerFeedbackTool(server *mcp.Server, fi *FeedbackIntegration) {
 			defer resp.Body.Close()
 			responseBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 			if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-				return nil, ReportProductFeedbackOutput{}, fmt.Errorf("feedback submission failed with HTTP %d", resp.StatusCode)
+				return nil, ReportProductFeedbackOutput{}, fmt.Errorf("feedback submission failed with HTTP %d; do not retry expired, forbidden, conflict, or disabled handles", resp.StatusCode)
 			}
 			var response struct {
 				ID       string `json:"id"`
@@ -358,7 +383,7 @@ func registerFeedbackTool(server *mcp.Server, fi *FeedbackIntegration) {
 }
 
 func validateFeedbackReport(report ReportProductFeedbackInput) error {
-	if !strings.HasPrefix(report.FeedbackHandle, "afr2_") || !validOpaqueRef(report.FeedbackHandle) {
+	if !validFeedbackHandle(report.FeedbackHandle) {
 		return errors.New("feedbackHandle must be a valid afr2_ handle")
 	}
 	report.Summary = strings.TrimSpace(report.Summary)
@@ -404,7 +429,7 @@ func validateFeedbackReport(report ReportProductFeedbackInput) error {
 }
 
 func validTopic(s string) bool {
-	if len(s) == 0 || len(s) > 64 || s[0] < 'a' || s[0] > 'z' {
+	if len(s) == 0 || len(s) > 64 || !((s[0] >= 'a' && s[0] <= 'z') || (s[0] >= '0' && s[0] <= '9')) {
 		return false
 	}
 	for _, r := range s[1:] {

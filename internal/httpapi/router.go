@@ -45,6 +45,11 @@ func agentFeedbackSessionRef(r *http.Request) string {
 type AgentFeedbackConfig struct{ APIKey, Endpoint, RuntimeHint, AnonymousRef string }
 
 func NewRouter(h *Handlers, mcpHandler http.Handler, diagBackend diag.Backend, restrictDiag bool, feedbackCfg ...AgentFeedbackConfig) http.Handler {
+	r, _ := NewRouterWithShutdown(h, mcpHandler, diagBackend, restrictDiag, feedbackCfg...)
+	return r
+}
+
+func NewRouterWithShutdown(h *Handlers, mcpHandler http.Handler, diagBackend diag.Backend, restrictDiag bool, feedbackCfg ...AgentFeedbackConfig) (http.Handler, func(context.Context) error) {
 	r := chi.NewRouter()
 
 	// Middleware
@@ -104,8 +109,8 @@ func NewRouter(h *Handlers, mcpHandler http.Handler, diagBackend diag.Backend, r
 		if err != nil {
 			log.Fatal(err)
 		}
-		return withAgentFeedbackSession(feedback.Middleware(r))
+		return withAgentFeedbackSession(feedback.Middleware(r)), feedback.Shutdown
 	}
 
-	return r
+	return r, func(context.Context) error { return nil }
 }
