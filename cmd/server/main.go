@@ -13,7 +13,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
-	"time"
 
 	"github.com/cschleiden/go-workflows/backend"
 	"github.com/cschleiden/go-workflows/backend/sqlite"
@@ -24,8 +23,6 @@ import (
 	"github.com/wayanjimmy/summarize/internal/engine"
 	"github.com/wayanjimmy/summarize/internal/events"
 	"github.com/wayanjimmy/summarize/internal/httpapi"
-	"github.com/wayanjimmy/summarize/internal/mcpauth"
-	"github.com/wayanjimmy/summarize/internal/mcpserver"
 	"github.com/wayanjimmy/summarize/internal/store"
 	"github.com/wayanjimmy/summarize/internal/summary"
 	"github.com/wayanjimmy/summarize/internal/workflow"
@@ -144,10 +141,10 @@ func main() {
 		slog.Error("Failed to recover queued runs", "error", err)
 	}
 
-	// Create shared model catalog (constructed once, shared by REST and future MCP)
+	// Create shared model catalog
 	modelCatalog := engine.NewModelCatalog(engine.DefaultModelCatalogTTL, piEngine, agyEngine)
 
-	// Create summary service (protocol-neutral, shared by REST and future MCP)
+	// Create summary service
 	summaryService := summary.NewService(appStore, publisher, modelCatalog, summary.ServiceConfig{
 		DefaultEngine: cfg.DefaultEngine,
 		DefaultPrompt: cfg.DefaultPrompt,
@@ -162,55 +159,9 @@ func main() {
 		Service: summaryService,
 	}
 
-	// Create MCP handler (stateless 2026-07-28)
-	var mcpHandler http.Handler
-	var feedbackIntegration *mcpserver.FeedbackIntegration
-	if cfg.AgentFeedbackKey != "" {
-		feedbackIntegration, err = mcpserver.NewFeedbackIntegration(mcpserver.FeedbackConfig{
-			APIKey: cfg.AgentFeedbackKey, Endpoint: cfg.AgentFeedbackEndpoint,
-			RuntimeHint: cfg.AgentFeedbackRuntimeHint,
-		})
-		if err != nil {
-			log.Fatalf("Failed to initialize MCP Agent Feedback: %v", err)
-		}
-		defer func() {
-			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer shutdownCancel()
-			if err := feedbackIntegration.Close(shutdownCtx); err != nil {
-				slog.Error("MCP Agent Feedback shutdown error", "error", err)
-			}
-		}()
-	}
-	if cfg.MCPEnable {
-		rawMCP := mcpserver.NewHandler(summaryService, version, feedbackIntegration)
-		// Wrap with auth middleware
-		authCfg := mcpauth.Config{
-			Mode:         cfg.MCPAuthMode,
-			APIKey:       cfg.MCPAPIKey,
-			AnonymousRef: cfg.MCPAnonymousRef,
-			OAuth: mcpauth.OAuthConfig{
-				Issuer:   cfg.MCPOAuthISS,
-				JWKSURL:  cfg.MCPOAuthJWKS,
-				Audience: cfg.MCPOAuthAud,
-			},
-		}
-		mcpHandler = mcpauth.Middleware(authCfg)(rawMCP)
-		slog.Info("MCP endpoint enabled", "auth_mode", cfg.MCPAuthMode)
-	} else {
-		slog.Info("MCP endpoint disabled")
-	}
-
 	// Create router
 	diagBackend, _ := any(wfBackend).(diag.Backend)
-	restrictDiag := cfg.MCPAuthMode != "" && cfg.MCPAuthMode != "none"
-	router, shutdownRESTFeedback := httpapi.NewRouterWithShutdown(handlers, mcpHandler, diagBackend, restrictDiag, httpapi.AgentFeedbackConfig{APIKey: cfg.AgentFeedbackKey, Endpoint: cfg.AgentFeedbackEndpoint, RuntimeHint: cfg.AgentFeedbackRuntimeHint, AnonymousRef: cfg.SummarizeInstallationRef})
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := shutdownRESTFeedback(shutdownCtx); err != nil {
-			slog.Error("REST Agent Feedback shutdown error", "error", err)
-		}
-	}()
+	router := httpapi.NewRouter(handlers, diagBackend, false)
 
 	// Start HTTP server
 	srv := &http.Server{

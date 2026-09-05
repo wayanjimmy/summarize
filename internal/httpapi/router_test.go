@@ -19,7 +19,7 @@ func TestDiagStatsMountedWithBackend(t *testing.T) {
 		t.Fatal("sqlite backend does not implement diag.Backend")
 	}
 
-	router := NewRouter(&Handlers{}, nil, diagBackend, false)
+	router := NewRouter(&Handlers{}, diagBackend, false)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/diag/api/stats", nil))
 	if rr.Code != http.StatusOK {
@@ -36,7 +36,7 @@ func TestDiagRedirect(t *testing.T) {
 		t.Fatal("sqlite backend does not implement diag.Backend")
 	}
 
-	router := NewRouter(&Handlers{}, nil, diagBackend, false)
+	router := NewRouter(&Handlers{}, diagBackend, false)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/diag", nil))
 	if rr.Code != http.StatusMovedPermanently {
@@ -48,29 +48,10 @@ func TestDiagRedirect(t *testing.T) {
 }
 
 func TestDiagNotMountedWithoutBackend(t *testing.T) {
-	router := NewRouter(&Handlers{}, nil, nil, false)
+	router := NewRouter(&Handlers{}, nil, false)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/diag/api/stats", nil))
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d", rr.Code, http.StatusNotFound)
-	}
-}
-
-func TestAgentFeedbackSessionIsSetByHandler(t *testing.T) {
-	var got string
-	productHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		setAgentFeedbackSession(r, "run-123")
-		w.WriteHeader(http.StatusAccepted)
-	})
-	observer := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		productHandler.ServeHTTP(w, r)
-		got = agentFeedbackSessionRef(r)
-	})
-	handler := withAgentFeedbackSession(observer)
-
-	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/v1/summaries", nil))
-	if got != "run-123" {
-		t.Fatalf("session ref = %q, want %q", got, "run-123")
 	}
 }

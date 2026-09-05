@@ -12,7 +12,6 @@ A simple Go REST API for summarizing YouTube videos and text using `pi` and `agy
 - Event-driven architecture (embedded NATS)
 - Durable workflow execution (go-workflows + SQLite)
 - Two engine backends: `pi` and `agy`
-- Optional Agent Feedback integration (os-epode), disabled by default
 
 ## Quick Start
 
@@ -66,8 +65,6 @@ Key environment variables:
 | `SUMMARIZE_YTDLP_BIN` | `yt-dlp` | Path to yt-dlp binary |
 | `SUMMARIZE_RUN_TIMEOUT` | `15m` | Max workflow runtime |
 | `SUMMARIZE_MAX_INPUT_CHARS` | `100000` | Max input size before truncation |
-| `AGENT_FEEDBACK_KEY` | empty | Enables Agent Feedback (os-epode) middleware on REST and MCP when set. Disabled by default |
-| `AGENT_FEEDBACK_ENDPOINT` | empty | Optional override for the Agent Feedback API endpoint |
 
 ## API Reference
 

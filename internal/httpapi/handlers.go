@@ -84,8 +84,6 @@ func (h *Handlers) CreateSummary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	setAgentFeedbackSession(r, result.RunID)
-
 	statusCode := http.StatusAccepted
 	if result.Cached && result.Status == domain.StatusSucceeded {
 		statusCode = http.StatusOK
@@ -113,8 +111,6 @@ func (h *Handlers) GetRunStatus(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	setAgentFeedbackSession(r, run.ID)
-
 	resp := StatusResponse{
 		RunID:     run.ID,
 		Status:    run.Status,
@@ -146,8 +142,6 @@ func (h *Handlers) GetSummary(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	setAgentFeedbackSession(r, run.ID)
-
 	resp := SummaryResponse{
 		RunID:           run.ID,
 		Status:          run.Status,
@@ -201,8 +195,6 @@ func (h *Handlers) CancelRun(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	setAgentFeedbackSession(r, task.ID)
-
 	writeJSON(w, http.StatusOK, TaskResponse{
 		RunID:   task.ID,
 		Status:  task.Status,
@@ -234,8 +226,6 @@ func (h *Handlers) UpdateRun(w http.ResponseWriter, r *http.Request) {
 		writeServiceError(w, err)
 		return
 	}
-	setAgentFeedbackSession(r, task.ID)
-
 	writeJSON(w, http.StatusOK, TaskResponse{
 		RunID:  task.ID,
 		Status: task.Status,
