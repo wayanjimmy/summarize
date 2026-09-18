@@ -161,7 +161,7 @@ func main() {
 
 	// Create router
 	diagBackend, _ := any(wfBackend).(diag.Backend)
-	router := httpapi.NewRouter(handlers, diagBackend, false)
+	router := httpapi.NewRouter(handlers, diagBackend)
 
 	// Start HTTP server
 	srv := &http.Server{

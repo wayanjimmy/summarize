@@ -9,7 +9,7 @@ import (
 )
 
 // NewRouter creates the router with all routes.
-func NewRouter(h *Handlers, diagBackend diag.Backend, restrictDiag bool) http.Handler {
+func NewRouter(h *Handlers, diagBackend diag.Backend) http.Handler {
 	r := chi.NewRouter()
 
 	// Middleware
@@ -20,7 +20,7 @@ func NewRouter(h *Handlers, diagBackend diag.Backend, restrictDiag bool) http.Ha
 	// Health check
 	r.Get("/healthz", h.Healthz)
 
-	if diagBackend != nil && !restrictDiag {
+	if diagBackend != nil {
 		r.Get("/diag", func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/diag/", http.StatusMovedPermanently)
 		})

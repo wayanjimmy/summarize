@@ -1,6 +1,6 @@
 // Package summary provides the protocol-neutral application service for
-// summarization. REST handlers and future MCP transports call the same
-// Service, keeping business logic in one place.
+// summarization. REST handlers call the same Service, keeping business logic
+// in one place.
 package summary
 
 // ErrorCategory classifies service errors for transport-level status mapping.

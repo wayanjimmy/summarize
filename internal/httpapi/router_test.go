@@ -19,7 +19,7 @@ func TestDiagStatsMountedWithBackend(t *testing.T) {
 		t.Fatal("sqlite backend does not implement diag.Backend")
 	}
 
-	router := NewRouter(&Handlers{}, diagBackend, false)
+	router := NewRouter(&Handlers{}, diagBackend)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/diag/api/stats", nil))
 	if rr.Code != http.StatusOK {
@@ -36,7 +36,7 @@ func TestDiagRedirect(t *testing.T) {
 		t.Fatal("sqlite backend does not implement diag.Backend")
 	}
 
-	router := NewRouter(&Handlers{}, diagBackend, false)
+	router := NewRouter(&Handlers{}, diagBackend)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/diag", nil))
 	if rr.Code != http.StatusMovedPermanently {
@@ -48,7 +48,7 @@ func TestDiagRedirect(t *testing.T) {
 }
 
 func TestDiagNotMountedWithoutBackend(t *testing.T) {
-	router := NewRouter(&Handlers{}, nil, false)
+	router := NewRouter(&Handlers{}, nil)
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/diag/api/stats", nil))
 	if rr.Code != http.StatusNotFound {

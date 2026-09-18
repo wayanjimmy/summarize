@@ -201,6 +201,5 @@ journalctl --user -u summarize.service -f
 | `engine_failed: pi exited with status 1` | pi model unavailable or incompatible; switch to `agy` |
 | `engine_failed: agy exited with status 1` | agy binary/API issue; check `journalctl --user -u summarize.service -f` |
 | `transcript_unavailable` | Video has no captions; no audio-transcription fallback |
-| Outcome submission returns 401 | Product key expired or mismatched; key must be rotated in `summarize.env` |
 | Poll returns 404 | Run ID is wrong or already expired |
 | Model validation returns 400 | Model name not in runtime catalog; list models with `GET /v1/models` |

@@ -7,9 +7,8 @@ import (
 )
 
 // Task is the application-level task projection from a Run.
-// It is independent of the MCP transport and will be exposed by Phase 5
-// as the native Tasks transport. The projection carries the lifecycle state
-// and result/error without transport-specific formatting.
+// It carries the lifecycle state and result/error without transport-specific
+// formatting.
 type Task struct {
 	ID           string
 	Status       string
