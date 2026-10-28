@@ -6,6 +6,7 @@ import (
 	"github.com/cschleiden/go-workflows/diag"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	dashboard "github.com/wayanjimmy/go-workflows-ui"
 )
 
 // NewRouter creates the router with all routes.
@@ -24,7 +25,7 @@ func NewRouter(h *Handlers, diagBackend diag.Backend) http.Handler {
 		r.Get("/diag", func(w http.ResponseWriter, r *http.Request) {
 			http.Redirect(w, r, "/diag/", http.StatusMovedPermanently)
 		})
-		r.Mount("/diag/", http.StripPrefix("/diag", diag.NewServeMux(diagBackend)))
+		r.Mount("/diag/", http.StripPrefix("/diag", dashboard.NewHandler(diagBackend)))
 	}
 
 	// API routes

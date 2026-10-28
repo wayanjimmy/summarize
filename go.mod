@@ -8,6 +8,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/nats-io/nats-server/v2 v2.14.2
 	github.com/nats-io/nats.go v1.52.0
+	github.com/wayanjimmy/go-workflows-ui v0.0.0-20261028235235-7c9c5afe0e83
 	modernc.org/sqlite v1.51.0
 )
 

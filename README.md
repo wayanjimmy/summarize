@@ -210,16 +210,24 @@ Response:
 
 ### Diagnostics Dashboard (GET /diag/)
 
-The go-workflows diagnostics dashboard is available on the main server port:
+The read-only [go-workflows-ui](https://github.com/wayanjimmy/go-workflows-ui)
+dashboard is embedded on the main server port and uses the application's existing
+workflow backend. No Node runtime, second database, or dashboard worker is needed.
 
 ```bash
 curl -i http://localhost:8080/diag
 open http://localhost:8080/diag/
 ```
 
-`/diag` redirects to `/diag/` so the dashboard can load its embedded assets. The dashboard is unauthenticated; expose it only on trusted/local deployments or protect it at your proxy.
+`/diag` redirects to `/diag/` so the dashboard can load its embedded assets.
+The dashboard includes execution history, payloads, a timeline, relationships,
+Today/Last 1 hour filters, and timezone selection. Its routes accept GET and HEAD
+only; this does not change the summary API's existing write operations.
 
-![go-workflows Diagnostics Dashboard](docs/workflow-dashboard.png)
+The dashboard is unauthenticated and exposes workflow payloads and errors. Keep it
+on trusted/local deployments or protect it at your proxy.
+
+The module is pinned in `go.mod`, without a local `replace`.
 
 ## Architecture
 
