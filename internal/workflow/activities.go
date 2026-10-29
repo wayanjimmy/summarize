@@ -34,6 +34,25 @@ func LoadRunActivity(ctx context.Context, runID string) (*RunMeta, error) {
 	return &RunMeta{InputType: run.InputType}, nil
 }
 
+// LoadSummaryResultActivity returns a claim check and bounded metadata from the
+// persisted terminal run. Generated text stays in the application database.
+func LoadSummaryResultActivity(ctx context.Context, runID string) (SummaryWorkflowResult, error) {
+	run, err := deps.Store.GetRun(runID)
+	if err != nil {
+		return SummaryWorkflowResult{}, fmt.Errorf("get summary result: %w", err)
+	}
+	if !domain.IsTerminalStatus(run.Status) {
+		return SummaryWorkflowResult{}, fmt.Errorf("summary run is not terminal: %s", run.Status)
+	}
+	result := SummaryWorkflowResult{
+		RunID: run.ID, Status: run.Status, SummaryBytes: len(run.Summary),
+	}
+	if run.Status == domain.StatusFailed {
+		result.ErrorCode = run.ErrorCode
+	}
+	return result, nil
+}
+
 // FetchTranscriptActivity fetches YouTube transcript and stores it.
 func FetchTranscriptActivity(ctx context.Context, runID string) error {
 	slog.Info("FetchTranscriptActivity", "run_id", runID)

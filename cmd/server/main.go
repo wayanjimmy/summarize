@@ -113,6 +113,7 @@ func main() {
 	w.RegisterWorkflow(workflow.SummaryWorkflow)
 	w.RegisterActivity(workflow.MarkRunningActivity)
 	w.RegisterActivity(workflow.LoadRunActivity)
+	w.RegisterActivity(workflow.LoadSummaryResultActivity)
 	w.RegisterActivity(workflow.FetchTranscriptActivity)
 	w.RegisterActivity(workflow.SummarizeActivity)
 	w.RegisterActivity(workflow.FailRunActivity)

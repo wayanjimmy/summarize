@@ -16,7 +16,10 @@ type SummaryWorkflowInput struct {
 // SummaryWorkflowResult references the application database record containing
 // the summary or failure details. It does not duplicate the stored content.
 type SummaryWorkflowResult struct {
-	RunID string `json:"run_id"`
+	RunID        string `json:"run_id"`
+	Status       string `json:"status"`
+	SummaryBytes int    `json:"summary_bytes"`
+	ErrorCode    string `json:"error_code,omitempty"`
 }
 
 // SummaryWorkflow is a batch workflow that summarizes content.
@@ -78,7 +81,7 @@ func SummaryWorkflow(ctx workflow.Context, input SummaryWorkflowInput) (SummaryW
 				}
 			}
 			_, _ = workflow.ExecuteActivity[any](ctx, workflow.DefaultActivityOptions, FailRunActivity, input.RunID, errorCode, errMsg).Get(ctx)
-			return result, nil // workflow completes gracefully on failure
+			return workflow.ExecuteActivity[SummaryWorkflowResult](ctx, workflow.DefaultActivityOptions, LoadSummaryResultActivity, input.RunID).Get(ctx)
 		}
 	}
 
@@ -93,9 +96,12 @@ func SummaryWorkflow(ctx workflow.Context, input SummaryWorkflowInput) (SummaryW
 	if err != nil {
 		logger.Error("Failed to summarize", "error", err)
 		_, _ = workflow.ExecuteActivity[any](ctx, workflow.DefaultActivityOptions, FailRunActivity, input.RunID, "engine_failed", err.Error()).Get(ctx)
-		return result, nil
+		return workflow.ExecuteActivity[SummaryWorkflowResult](ctx, workflow.DefaultActivityOptions, LoadSummaryResultActivity, input.RunID).Get(ctx)
 	}
 
-	logger.Info("Summary workflow completed", "run_id", input.RunID)
-	return result, nil
+	result, err = workflow.ExecuteActivity[SummaryWorkflowResult](ctx, workflow.DefaultActivityOptions, LoadSummaryResultActivity, input.RunID).Get(ctx)
+	if err == nil {
+		logger.Info("Summary workflow completed", "run_id", input.RunID)
+	}
+	return result, err
 }
