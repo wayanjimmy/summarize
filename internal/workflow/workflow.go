@@ -13,9 +13,16 @@ type SummaryWorkflowInput struct {
 	RunID string
 }
 
+// SummaryWorkflowResult references the application database record containing
+// the summary or failure details. It does not duplicate the stored content.
+type SummaryWorkflowResult struct {
+	RunID string `json:"run_id"`
+}
+
 // SummaryWorkflow is a batch workflow that summarizes content.
 // Activities read/write state from the app DB by run_id.
-func SummaryWorkflow(ctx workflow.Context, input SummaryWorkflowInput) error {
+func SummaryWorkflow(ctx workflow.Context, input SummaryWorkflowInput) (SummaryWorkflowResult, error) {
+	result := SummaryWorkflowResult{RunID: input.RunID}
 	logger := workflow.Logger(ctx)
 	logger.Info("Starting summary workflow", "run_id", input.RunID)
 
@@ -36,7 +43,7 @@ func SummaryWorkflow(ctx workflow.Context, input SummaryWorkflowInput) error {
 	_, err := workflow.ExecuteActivity[any](ctx, workflow.DefaultActivityOptions, MarkRunningActivity, input.RunID).Get(ctx)
 	if err != nil {
 		logger.Error("Failed to mark running", "error", err)
-		return err
+		return result, err
 	}
 
 	// Load run to determine input type
@@ -44,7 +51,7 @@ func SummaryWorkflow(ctx workflow.Context, input SummaryWorkflowInput) error {
 	if err != nil {
 		logger.Error("Failed to load run", "error", err)
 		_, _ = workflow.ExecuteActivity[any](ctx, workflow.DefaultActivityOptions, FailRunActivity, input.RunID, "workflow_failed", "failed to load run: "+err.Error()).Get(ctx)
-		return err
+		return result, err
 	}
 
 	// Fetch transcript if YouTube
@@ -71,7 +78,7 @@ func SummaryWorkflow(ctx workflow.Context, input SummaryWorkflowInput) error {
 				}
 			}
 			_, _ = workflow.ExecuteActivity[any](ctx, workflow.DefaultActivityOptions, FailRunActivity, input.RunID, errorCode, errMsg).Get(ctx)
-			return nil // workflow completes gracefully on failure
+			return result, nil // workflow completes gracefully on failure
 		}
 	}
 
@@ -86,9 +93,9 @@ func SummaryWorkflow(ctx workflow.Context, input SummaryWorkflowInput) error {
 	if err != nil {
 		logger.Error("Failed to summarize", "error", err)
 		_, _ = workflow.ExecuteActivity[any](ctx, workflow.DefaultActivityOptions, FailRunActivity, input.RunID, "engine_failed", err.Error()).Get(ctx)
-		return nil
+		return result, nil
 	}
 
 	logger.Info("Summary workflow completed", "run_id", input.RunID)
-	return nil
+	return result, nil
 }

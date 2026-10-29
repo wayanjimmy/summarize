@@ -224,6 +224,11 @@ The dashboard includes execution history, payloads, a timeline, relationships,
 Today/Last 1 hour filters, and timezone selection. Its routes accept GET and HEAD
 only; this does not change the summary API's existing write operations.
 
+New workflow completions return `{"run_id":"…"}` in Payloads → Result. This is
+the application database key used by `GET /v1/summaries/{run_id}`. The referenced
+record holds the summary or application failure details; summary text is not
+duplicated in workflow history. Existing completed executions are not backfilled.
+
 The dashboard is unauthenticated and exposes workflow payloads and errors. Keep it
 on trusted/local deployments or protect it at your proxy.
 
